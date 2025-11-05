@@ -1,6 +1,7 @@
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::State,
+    http::StatusCode,
     response::{Html, Response},
     routing::{get, post},
     Json, Router,
@@ -67,16 +68,19 @@ async fn health_check() -> Json<HealthResponse> {
 async fn create_item(
     State(state): State<AppState>,
     Json(payload): Json<CreateItemRequest>,
-) -> Json<CreateItemResponse> {
+) -> (StatusCode, Json<CreateItemResponse>) {
     let mut counter = state.item_counter.lock().await;
     *counter += 1;
     let id = *counter;
 
-    Json(CreateItemResponse {
-        id,
-        name: payload.name,
-        description: payload.description,
-    })
+    (
+        StatusCode::CREATED,
+        Json(CreateItemResponse {
+            id,
+            name: payload.name,
+            description: payload.description,
+        }),
+    )
 }
 
 /// WebSocket handler
@@ -190,10 +194,14 @@ async fn main() {
         .layer(CorsLayer::permissive());
 
     // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .expect("Failed to bind to port 3000");
     println!("🚀 Server running on http://localhost:3000");
     println!("📡 WebSocket available at ws://localhost:3000/ws");
     println!("📚 Swagger UI available at http://localhost:3000/swagger-ui");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .await
+        .expect("Server failed to start");
 }
