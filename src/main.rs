@@ -3,6 +3,7 @@ mod handlers;
 mod routes;
 mod docs;
 mod websocket;
+mod config;
 
 use axum::{
     Router,
@@ -14,10 +15,18 @@ use utoipa_swagger_ui::SwaggerUi;
 use routes::create_api_routes;
 use docs::ApiDoc;
 use websocket::websocket_handler;
+use config::Config;
 
 #[tokio::main]
 async fn main() {
     println!("Starting server ...");
+
+    // Load configuration
+    let config = Config::load().unwrap_or_else(|e| {
+        eprintln!("Failed to load configuration: {}", e);
+        eprintln!("Using default configuration");
+        Config::default()
+    });
 
     // Create API routes
     let api_routes = create_api_routes();
@@ -28,13 +37,13 @@ async fn main() {
         .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
     // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let listener = tokio::net::TcpListener::bind(config.server_address())
         .await
-        .expect("Failed to bind to port 3000");
+        .unwrap_or_else(|_| panic!("Failed to bind to {}", config.server_address()));
         
-    println!("🚀 Server running on http://localhost:3000");
-    println!("📡 WebSocket available at ws://localhost:3000/ws");
-    println!("📚 Swagger UI available at http://localhost:3000/swagger");
+    println!("🚀 Server running on http://{}", config.server_address());
+    println!("📡 WebSocket available at ws://{}/ws", config.server_address());
+    println!("📚 Swagger UI available at http://{}/swagger", config.server_address());
 
     axum::serve(listener, app_routes)
         .await
