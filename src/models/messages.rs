@@ -1,6 +1,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::models::SerializedColabDoc;
+use serde_with::{serde_as, base64::Base64};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -9,10 +10,12 @@ pub struct LoadMessage {
     pub peer: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMessage {
-    pub delta: String,
+    #[serde_as(as = "Base64")]
+    pub delta: Vec<u8>,
     pub user: String,
     pub peer: String,
 }
@@ -30,7 +33,7 @@ pub struct InitMessage {
     pub colab_doc: SerializedColabDoc,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PongMessage {
     pub date: String,
@@ -48,9 +51,9 @@ pub enum ReceivedMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BroadcastMessage {
+pub struct BroadcastUpdateMessage {
     pub sender_id: String,
-    pub content: String,
+    pub update: UpdateMessage,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -14,6 +14,7 @@ pub struct SerializedColabDoc {
     pub loro_doc: Vec<u8>,
 }
 
+#[derive(Debug)]
 pub struct ColabDoc {
     pub name: String,
     pub id: String,

@@ -4,13 +4,14 @@ use axum::{
     extract::{Path, ws::{Message, WebSocket, WebSocketUpgrade}},
     response::Response,
 };
+use loro::LoroDoc;
 use tokio::sync::broadcast;
 use tracing::{info, error};
 use futures_util::{StreamExt, SinkExt};
 use uuid::Uuid;
 
-use crate::{AppState, websocket::msg_update_handler::handle_update_message};
-use crate::models::{ReceivedMessage, BroadcastMessage};
+use crate::{AppState, models::{ColabDoc, ColabDocSession}, websocket::msg_update_handler::handle_update_message};
+use crate::models::{ReceivedMessage, BroadcastUpdateMessage};
 use crate::websocket::msg_load_handler::handle_load_message;
 use crate::websocket::msg_ping_handler::handle_ping_message;
 
@@ -42,19 +43,43 @@ async fn handle_socket(socket: WebSocket, document_id: String, app_state: Arc<Ap
     let sender2 = sender1.clone();
 
     // Get or create broadcast channel for this document
-    let bc = {
-        let mut documents = app_state.documents.write().await;
-        documents
+    // First, ensure the document session exists
+    {
+        let mut docsessions = app_state.docsessions.write().await;
+        docsessions
             .entry(document_id.clone())
             .or_insert_with(|| {
-                let (bc, _rx) = broadcast::channel::<BroadcastMessage>(100);
-                bc
-            }).clone()
-    };
-    let mut rbc = bc.subscribe();
+                ColabDocSession {
+                    id: document_id.clone(),
+                    doc: tokio::sync::RwLock::new(ColabDoc {
+                        name: "test".to_string(),
+                        id: document_id.clone(),
+                        loro_doc: {
+                            let loro_doc = LoroDoc::new();
+                            loro_doc.get_text("text");
+                            loro_doc
+                        }
+
+                    }),
+                    broadcast: {
+                        let (bc, _rx) = broadcast::channel::<BroadcastUpdateMessage>(100);
+                        tokio::sync::RwLock::new(bc)
+                    },
+                }
+            });
+    } // Drop the write lock here
+    
+    // Now get a reference to the broadcast receiver
+    let mut rbc = {
+        let docsessions_read = app_state.docsessions.read().await;
+        let docsession = docsessions_read.get(&document_id).unwrap();
+        let bc = docsession.broadcast.read().await;
+        bc.subscribe()
+    }; // All locks are dropped here
 
     // Start an async task to listen to the websocket for incoming messages
     // Does this as a separate asynchronous task
+    let app_state_ref = app_state.clone();
     let mut send_task = tokio::spawn(async move {
 
         // Listen for incoming messages
@@ -80,11 +105,11 @@ async fn handle_socket(socket: WebSocket, document_id: String, app_state: Arc<Ap
             // Handle different message types
             match json_msg {
                 ReceivedMessage::Load(load_msg) => {
-                    handle_load_message(&load_msg, document_id.clone(), &sender1).await;
+                    handle_load_message(&load_msg, document_id.clone(), &sender1, &app_state_ref).await;
                     continue;
                 }
                 ReceivedMessage::Update(update_msg) => {
-                    handle_update_message(&update_msg, document_id.clone(), connection_id1.clone(), &bc).await;
+                    handle_update_message(&update_msg, document_id.clone(), connection_id1.clone(), &app_state_ref).await;
                     continue;
                 }
                 ReceivedMessage::Ping(ping_msg) => {
@@ -99,12 +124,18 @@ async fn handle_socket(socket: WebSocket, document_id: String, app_state: Arc<Ap
     // Start a task to monitor whether there are broadcast messages and send to client
     let mut recv_task = tokio::spawn(async move {
         while let Ok(broadcast_msg) = rbc.recv().await {
+            
             // Skip messages from this connection to prevent echo
             if broadcast_msg.sender_id == connection_id2 {
                 continue;
             }
+
+            // Serialize the update message and send to client
+            let complete_msg = ReceivedMessage::Update(broadcast_msg.update);
+            let update_msg_text = serde_json::to_string(&complete_msg).unwrap();
             
-            if sender2.lock().await.send(Message::Text(broadcast_msg.content)).await.is_err() {
+            // Send the message
+            if sender2.lock().await.send(Message::Text(update_msg_text)).await.is_err() {
                 break;
             }
         }

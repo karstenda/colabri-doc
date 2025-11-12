@@ -18,16 +18,14 @@ use websocket::websocket_handler;
 use config::Config;
 use tracing::{info, error, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock};
 use std::{panic, collections::HashMap, sync::Arc};
-use models::BroadcastMessage;
-
+use models::ColabDocSession;
 
 // Shared application state
 type DocumentId = String;
 struct AppState {
-    documents: RwLock<HashMap<DocumentId, broadcast::Sender<BroadcastMessage>>>,
-    
+    docsessions: RwLock<HashMap<DocumentId, ColabDocSession>>,
 }
 
 #[tokio::main]
@@ -58,7 +56,7 @@ async fn main() {
 
     // Create application state
     let app_state = Arc::new(AppState {
-        documents: RwLock::new(HashMap::new()),
+        docsessions: RwLock::new(HashMap::new()),
     });
 
     // Create API routes
