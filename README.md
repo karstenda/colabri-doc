@@ -178,12 +178,14 @@ colabri-doc/
 
 - **axum**: Web framework with WebSocket support
 - **tokio**: Async runtime
-- **tower** & **tower-http**: Middleware support
+- **tower** & **tower-http**: Middleware support (includes tracing)
 - **serde** & **serde_json**: JSON serialization
 - **utoipa**: OpenAPI documentation generation
 - **utoipa-swagger-ui**: Swagger UI integration
 - **dotenvy**: Environment file (.env) loading
 - **envy**: Environment variable deserialization
+- **tracing**: Structured, async-aware logging framework
+- **tracing-subscriber**: Utilities for implementing tracing subscribers
 
 ## Screenshots
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::{info, error};
 
 /// Application configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -51,11 +52,11 @@ impl Config {
         // Load from environment variables using envy
         match envy::from_env::<Config>() {
             Ok(config) => {
-                println!("✅ Configuration loaded successfully");
+                info!("✅ Configuration loaded successfully");
                 Ok(config)
             }
             Err(e) => {
-                eprintln!("❌ Failed to load configuration: {}", e);
+                error!("❌ Failed to load configuration: {}", e);
                 Err(ConfigError::EnvError(e))
             }
         }
