@@ -25,6 +25,20 @@ cargo build
 
 The application can be configured using environment variables or an `app.env` file. If an `app.env` file exists, it will be loaded automatically. Otherwise, the application will look for a standard `.env` file or use environment variables directly.
 
+#### Setting up Configuration
+
+In order to develop locally, we have already created an `app.env` file on Google Cloud Secret Manager. Pull it from there by running:
+
+Linux
+```bash
+gcloud secrets versions access latest --secret="colabri-doc_app_env" --format='get(payload.data)' | tr '_-' '/+' | base64 -d > app.env
+```
+
+Windows
+```bash
+(gcloud secrets versions access latest --secret="colabri-doc_app_env" --format='get(payload.data)') -replace '_', '/' -replace '-', '+' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) } | Out-File app.env -Encoding UTF8
+```
+
 #### Configuration Options
 
 | Variable | Description | Default | Example |
@@ -39,29 +53,6 @@ The application can be configured using environment variables or an `app.env` fi
 | `CLOUD_AUTH_JWT_SECRET` | JWT secret | None | `your-secret-key` |
 | `GCP_PROJECT_ID` | Google Cloud Project ID | None | `google-cloud-project-id` |
 | `DB_URL` | Database connection string | None | `postgresql://user:pass@localhost/db` |
-
-#### Setting up Configuration
-
-1. **Using app.env file (recommended)**:
-   ```bash
-   cp app.env.example app.env
-   # Edit app.env with your preferred settings
-   ```
-
-2. **Using environment variables**:
-   ```bash
-   export HOST=127.0.0.1
-   export PORT=8080
-   export LOG_LEVEL=debug
-   cargo run
-   ```
-
-3. **Using .env file**:
-   ```bash
-   # Create .env file with your configuration
-   echo "PORT=8080" > .env
-   echo "HOST=127.0.0.1" >> .env
-   ```
 
 #### Configuration Priority
 

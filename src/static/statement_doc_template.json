@@ -1,0 +1,22 @@
+{
+    "type": "doc-statement",
+    "contentType": "",
+    "owner": "",
+    "acl": {
+        "view": [],
+        "edit": [],
+        "manage": [],
+        "add-remove": [],
+        "delete": []
+    },
+    "content": {
+        "en": {
+            "text": "<body><p><br/</p></body>",
+            "acl": {
+                "view": [],
+                "edit": []
+            },
+            "comments": []
+        }
+    }
+}
