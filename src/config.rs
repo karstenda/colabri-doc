@@ -12,6 +12,10 @@ pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
 
+    /// WebSocket port
+    #[serde(default = "default_websocket_port")]
+    pub websocket_port: u16,
+
     /// Environment (dev, staging, prod)
     #[serde(default = "default_environment")]
     pub environment: String,
@@ -66,16 +70,12 @@ impl Config {
     pub fn server_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
-    
-    /// Check if running in development mode
-    pub fn is_development(&self) -> bool {
-        self.environment.to_lowercase() == "dev" || self.environment.to_lowercase() == "development"
+
+    /// Get the WebSocket port
+    pub fn websocket_port(&self) -> u16 {
+        self.websocket_port
     }
     
-    /// Check if running in production mode
-    pub fn is_production(&self) -> bool {
-        self.environment.to_lowercase() == "prod" || self.environment.to_lowercase() == "production"
-    }
 }
 
 impl Default for Config {
@@ -83,6 +83,7 @@ impl Default for Config {
         Self {
             host: default_host(),
             port: default_port(),
+            websocket_port: default_websocket_port(),
             environment: default_environment(),
             log_level: default_log_level(),
             cors_origins: None,
@@ -117,6 +118,10 @@ fn default_host() -> String {
 
 fn default_port() -> u16 {
     3000
+}
+
+fn default_websocket_port() -> u16 {
+    9001
 }
 
 fn default_log_level() -> String {

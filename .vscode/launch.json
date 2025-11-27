@@ -1,0 +1,31 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug colabri-doc",
+      "program": "${workspaceFolder}/target/debug/colabri-doc.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "debug",
+        "HOST": "0.0.0.0",
+        "PORT": "3000",
+        "WEBSOCKET_PORT": "9001",
+        "ENVIRONMENT": "development",
+        "LOG_LEVEL": "info",
+        "CLOUD_SERVICE_NAME": "colabri-doc",
+        "CLOUD_POD": "local-windy",
+        "CLOUD_AUTH_JWT_SECRET": "f30b0611aa8685fac3687a9d0e194535",
+        "DB_URL": "postgresql://root:secret@localhost:5432/colabri-db?sslmode=disable",
+        "GCP_PROJECT_ID": "colabri-prd"
+      },
+      "preLaunchTask": "cargo build",
+      "console": "integratedTerminal"
+    }
+  ]
+}

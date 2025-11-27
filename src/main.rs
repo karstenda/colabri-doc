@@ -2,33 +2,24 @@ mod models;
 mod handlers;
 mod routes;
 mod docs;
-mod websocket;
+// mod websocket; // No longer needed - using loro-websocket-server directly
 mod config;
+mod db;
+mod ws;
 
-use axum::{
-    Router,
-    routing::get,
-};
+use axum::Router;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use routes::create_api_routes;
 use docs::ApiDoc;
-use websocket::websocket_handler;
 use config::Config;
 use tracing::{info, error, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use tokio::sync::{RwLock};
-use std::{panic, collections::HashMap, sync::Arc};
-use models::ColabDocSession;
+use std::panic;
+use loro_websocket_server::ServerConfig;
 
-// Shared application state
-type DocumentId = String;
-struct AppState {
-    docsessions: RwLock<HashMap<DocumentId, ColabDocSession>>,
-}
-
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
 
     // Set panic hook for better error messages
@@ -54,10 +45,18 @@ async fn main() {
         Config::default()
     });
 
-    // Create application state
-    let app_state = Arc::new(AppState {
-        docsessions: RwLock::new(HashMap::new()),
-    });
+    // Initialize database connection if URL is provided
+    if let Some(db_url) = &config.db_url {
+        match db::dbcolab::init_db(db_url).await {
+            Ok(_) => info!("Database initialized successfully"),
+            Err(e) => {
+                error!("Failed to initialize database: {}", e);
+                warn!("WebSocket document loading will not be available");
+            }
+        }
+    } else {
+        warn!("No database URL configured - WebSocket document loading will not be available");
+    }
 
     // Create API routes
     let api_routes = create_api_routes();
@@ -66,20 +65,44 @@ async fn main() {
     let app_routes = Router::new()
         // Mount API routes
         .nest("/api", api_routes)
-        // Mount WebSocket route
-        .route("/ws/doc/:document_id", get(websocket_handler).with_state(app_state))
         // Mount Swagger UI
         .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
         // Add tracing layer
         .layer(TraceLayer::new_for_http());
 
-    // Start the server
+    // Configure loro-websocket-server
+    let ws_port = config.websocket_port();
+    let ws_addr = format!("{}:{}", config.host, ws_port);
+    let ws_config = ServerConfig {
+        on_load_document: Some(std::sync::Arc::new(ws::wscolab::on_load_document)),
+        on_save_document: None, // TODO: Implement document saving
+        save_interval_ms: Some(30_000), // Save every 30 seconds
+        default_permission: loro_websocket_server::protocol::Permission::Write,
+        authenticate: None, // TODO: Implement authentication if needed
+        handshake_auth: None, // TODO: Implement handshake auth if needed
+    };
+
+    // Start WebSocket server
+    let ws_listener = tokio::net::TcpListener::bind(&ws_addr)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to bind WebSocket server to {}", ws_addr));
+    
+    info!("📡 WebSocket server starting on ws://{}", ws_addr);
+    
+    // Spawn WebSocket server task
+    tokio::spawn(async move {
+        if let Err(e) = loro_websocket_server::serve_incoming_with_config(ws_listener, ws_config).await {
+            error!("WebSocket server error: {}", e);
+        }
+    });
+
+    // Start the HTTP/API server
     let listener = tokio::net::TcpListener::bind(config.server_address())
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {}", config.server_address()));
         
     info!("🚀 Server running on http://{}", config.server_address());
-    info!("📡 WebSocket available at ws://{}/ws/doc", config.server_address());
+    info!("📡 WebSocket available at ws://{}", ws_addr);
     info!("📚 Swagger UI available at http://{}/swagger", config.server_address());
 
     axum::serve(listener, app_routes)
