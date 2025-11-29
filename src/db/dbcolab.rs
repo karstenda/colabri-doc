@@ -8,8 +8,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
-use crate::models::colab::{ColabStatementModel};
-
 // Global database instance
 static DB: OnceCell<Arc<DbColab>> = OnceCell::const_new();
 
@@ -59,6 +57,7 @@ pub struct DocumentStreamRow {
     pub name: String,
     pub document: uuid::Uuid,
     pub version: i32,
+    #[serde(deserialize_with = "deserialize_base64_content")]
     pub content: Option<Vec<u8>>,
     pub pointer: Option<String>,
     pub size: i64,
@@ -67,6 +66,22 @@ pub struct DocumentStreamRow {
     pub created_by: Option<uuid::Uuid>,
     pub updated_by: Option<uuid::Uuid>,
     pub deleted: bool
+}
+
+fn deserialize_base64_content<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use base64::{Engine as _, engine::general_purpose};
+    
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(s) => general_purpose::STANDARD
+            .decode(s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        None => Ok(None),
+    }
 }
 
 /// Document ACL Row
@@ -129,21 +144,21 @@ impl DbColab {
     pub async fn load_statement_doc(
         &self,
         org: &str,
-        id: uuid::Uuid,
+        document_id: uuid::Uuid,
     ) -> Result<Option<StatementDocument>, SqlxError> {
 
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
         info!("Loading document {} for org {}. Pool connections: {} idle, {} in use", 
-              id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
                 error!("Failed to acquire connection from pool for document {}: {}. Pool state: {} idle, {} total", 
-                       id, e, self.pool.num_idle(), self.pool.size());
+                       document_id, e, self.pool.num_idle(), self.pool.size());
                 return Err(e);
             }
         };
@@ -174,7 +189,23 @@ impl DbColab {
                     '[]'
                 ) AS acls,
                 COALESCE(
-                    (SELECT json_agg(ds.*) FROM document_streams ds WHERE ds.document = d.id AND ds.deleted = FALSE),
+                    (SELECT json_agg(
+                        json_build_object(
+                            'org', ds.org,
+                            'id', ds.id,
+                            'name', ds.name,
+                            'document', ds.document,
+                            'version', ds.version,
+                            'content', encode(ds.content, 'base64'),
+                            'pointer', ds.pointer,
+                            'size', ds.size,
+                            'created_at', ds.created_at,
+                            'updated_at', ds.updated_at,
+                            'created_by', ds.created_by,
+                            'updated_by', ds.updated_by,
+                            'deleted', ds.deleted
+                        )
+                    ) FROM document_streams ds WHERE ds.document = d.id AND ds.deleted = FALSE),
                     '[]'
                 ) AS streams
             FROM documents d 
@@ -187,7 +218,7 @@ impl DbColab {
 
         let row = sqlx::query(query_sql)
             .bind(org)
-            .bind(id)
+            .bind(document_id)
             .fetch_optional(&mut *tx)
             .await?;
 
@@ -209,8 +240,8 @@ impl DbColab {
                 // Use sqlx::types::Json wrapper for JSONB column
                 let json_wrapped: Option<Json<serde_json::Value>> = row.try_get("json")?;
                 let json = json_wrapped.map(|j| j.0);
-                info!("Loaded json field: {:?}", json.as_ref().map(|j| j.to_string()));
 
+                // Create the StatementDocument
                 let doc = StatementDocument {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
@@ -230,42 +261,156 @@ impl DbColab {
         }
     }
 
-    /// Insert or update a statement document
+    /// Insert a statement document
     ///
     /// # Arguments
-    /// * `id` - Document UUID (optional, will generate if None)
-    /// * `doc` - Statement document to save
+    /// * `org` - ID of the organization
+    /// * `document_id` - Document UUID (optional, will generate if None)
+    /// * `snapshot` - The snapshot of the LoroDoc to save
     ///
     /// # Returns
     /// * `Result<uuid::Uuid, SqlxError>` - Document ID
-    pub async fn _upsert_statement_doc(
+    pub async fn insert_statement_doc_stream(
         &self,
-        id: Option<uuid::Uuid>,
-        doc: &ColabStatementModel,
+        org: &str,
+        document_id: uuid::Uuid,
+        snapshot: Vec<u8>,
     ) -> Result<uuid::Uuid, SqlxError> {
-        let doc_id = id.unwrap_or_else(uuid::Uuid::new_v4);
-        let content = serde_json::to_value(doc)
-            .map_err(|e| SqlxError::Encode(Box::new(e)))?;
 
-        let sql = r#"
-            INSERT INTO documents (id, doc_type, content, created_at, updated_at)
-            VALUES ($1, $2, $3, NOW(), NOW())
-            ON CONFLICT (id) 
-            DO UPDATE SET 
-                content = EXCLUDED.content,
-                updated_at = NOW()
-            RETURNING id
-        "#;
+        // Calculate the size of the snapshot
+        let snapshot_size = snapshot.len() as i64;
 
-        let row = sqlx::query(sql)
-            .bind(doc_id)
-            .bind("doc-statement")
-            .bind(content)
-            .fetch_one(&self.pool)
+        // Log pool stats before acquiring connection
+        let pool_idle = self.pool.num_idle() as u32;
+        let pool_size = self.pool.size();
+        info!("Creating document {} for org {}. Pool connections: {} idle, {} in use", 
+              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+
+        // Begin a transaction
+        let mut tx = match self.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to acquire connection from pool for document {}: {}. Pool state: {} idle, {} total", 
+                       document_id, e, self.pool.num_idle(), self.pool.size());
+                return Err(e);
+            }
+        };
+
+        // Set the policy context
+        // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
+        let safe_org = org.replace("'", "''");
+        let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
+
+        sqlx::query(&policy_sql)
+            .execute(&mut *tx)
             .await?;
 
-        let returned_id: uuid::Uuid = row.try_get("id")?;
-        info!("Statement document saved: {}", returned_id);
+        // Execute the main query
+        let query_sql = r#"
+            INSERT INTO document_streams(org, document, name, content, version, size)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id;
+        "#;
+        let row = sqlx::query(query_sql)
+            .bind(org)
+            .bind(document_id)
+            .bind("main")
+            .bind(snapshot)
+            .bind(1) // version
+            .bind(snapshot_size) // size // created_by
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        // Commit the transaction
+        tx.commit().await?;
+        
+        let returned_id: uuid::Uuid = row.unwrap().try_get("id")?;
+        info!("Document Stream saved: {}", returned_id);
         Ok(returned_id)
     }
+
+    /// Update a statement document stream
+    ///
+    /// # Arguments
+    /// * `org` - ID of the organization
+    /// * `doc_stream_id` - The UUID of the document stream to update with the new snapshot
+    /// * `snapshot` - The snapshot of the LoroDoc to update
+    /// * `doc_stmt_id` - The UUID of the document statement to update with the new JSON
+    /// * `json` - The JSON representation of the loro document
+    ///
+    /// # Returns
+    /// * `Result<uuid::Uuid, SqlxError>` - Stream ID
+    pub async fn update_statement(
+        &self,
+        org: &str,
+        doc_id: uuid::Uuid,
+        doc_stream_id: uuid::Uuid,
+        snapshot: Vec<u8>,
+        json: serde_json::Value,
+    ) -> Result<uuid::Uuid, SqlxError> {
+
+        // Calculate the size of the snapshot
+        let snapshot_size = snapshot.len() as i64;
+
+        // Log pool stats before acquiring connection
+        let pool_idle = self.pool.num_idle() as u32;
+        let pool_size = self.pool.size();
+        info!("Updating doc {} with stream {} for org {}. Pool connections: {} idle, {} in use", 
+              doc_id, doc_stream_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+
+        // Begin a transaction
+        let mut tx = match self.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to acquire connection from pool. Pool state: {} idle, {} total", 
+                      self.pool.num_idle(), self.pool.size());
+                return Err(e);
+            }
+        };
+
+        // Set the policy context
+        // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
+        let safe_org = org.replace("'", "''");
+        let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
+
+        sqlx::query(&policy_sql)
+            .execute(&mut *tx)
+            .await?;
+
+        // Execute the main query
+        let update_stream_query_sql = r#"
+            UPDATE document_streams
+            SET content = $1,
+                size = $2,
+                updated_at = NOW(),
+                updated_by = NULL
+            WHERE org = $3
+                AND id = $4
+                AND deleted = FALSE
+            RETURNING id;
+        "#;
+        let doc_stream_row = sqlx::query(update_stream_query_sql)
+            .bind(snapshot)
+            .bind(snapshot_size) // size
+            .bind(org)
+            .bind(doc_stream_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        // Commit the transaction
+        tx.commit().await?;
+        
+        match doc_stream_row {
+            Some(row) => {
+                let returned_id: uuid::Uuid = row.try_get("id")?;
+                info!("Document Stream updated: {}", returned_id);
+                Ok(returned_id)
+            }
+            None => {
+                error!("Document stream not found for update: org={}, doc_stream={}", org, doc_stream_id);
+                Err(SqlxError::RowNotFound)
+            }
+        }
+    }
 }
+

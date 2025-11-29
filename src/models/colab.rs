@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::option::Option;
 use std::fmt;
-use loro::{LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText};
+use loro::{LoroDoc, LoroList, LoroMap, LoroText};
 use serde::{Deserialize, Deserializer, Serialize};
 use chrono::{DateTime, Utc};
 
@@ -137,21 +137,18 @@ pub struct TextElement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum TextElementChild {
-    Object {
-        children: TextElementChildrenOrString,
-        attributes: HashMap<String, String>,
-        #[serde(rename = "nodeName")]
-        node_name: String,
-    },
-    String(String),
+pub struct TextElementChild {
+    pub children: TextElementChildrenOrString,
+    pub attributes: HashMap<String, String>,
+    #[serde(rename = "nodeName")]
+    pub node_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TextElementChildrenOrString {
     AsChildren(Vec<TextElementChild>),
+    AsStringArray(Vec<String>),
     AsString(String),
 }
 
@@ -222,19 +219,11 @@ fn txtelem_to_loro_doc(text_element: &TextElement, loro_map: &LoroMap) {
     }
 
     // Set the children
-    let children_loro_list = loro_map.get_or_create_container("children", LoroMovableList::new()).unwrap();
+    let children_loro_list = loro_map.get_or_create_container("children", LoroList::new()).unwrap();
     for (idx, child) in text_element.children.iter().enumerate() {
-        match child {
-            TextElementChild::Object { .. } => {
-                let child_loro_map = LoroMap::new();
-                txtelem_child_to_loro_map(child, &child_loro_map, 0, MAX_DEPTH);
-                let _ = children_loro_list.insert_container(idx, child_loro_map);
-            }
-            TextElementChild::String(s) => {
-                let loro_text = children_loro_list.insert_container(idx, LoroText::new()).unwrap();
-                let _ = loro_text.insert(0, s.as_str());
-            }
-        }
+        let child_loro_map = LoroMap::new();
+        txtelem_child_to_loro_map(child, &child_loro_map, 0, MAX_DEPTH);
+        let _ = children_loro_list.insert_container(idx, child_loro_map);
     }
 }
 
@@ -246,43 +235,36 @@ fn txtelem_child_to_loro_map(child: &TextElementChild, loro_map: &LoroMap, depth
         return;
     }
     
-    match child {
-        TextElementChild::Object { node_name, attributes, children } => {
-            // Set the nodeName
-            let _ = loro_map.insert("nodeName", node_name.as_str());
+    // Set the nodeName
+    let _ = loro_map.insert("nodeName", child.node_name.as_str());
 
-            // Set the attributes
-            let attributes_loro_map = loro_map.get_or_create_container("attributes", LoroMap::new()).unwrap();
-            for (key, value) in attributes {
-                let _ = attributes_loro_map.insert(key, value.as_str());
-            }
+    // Set the attributes
+    let attributes_loro_map = loro_map.get_or_create_container("attributes", LoroMap::new()).unwrap();
+    for (key, value) in &child.attributes {
+        let _ = attributes_loro_map.insert(key, value.as_str());
+    }
 
-            // Set the children
-            match children {
-                TextElementChildrenOrString::AsChildren(children_vec) => {
-                    let children_loro_list = loro_map.get_or_create_container("children", LoroMovableList::new()).unwrap();
-                    for (idx, nested_child) in children_vec.iter().enumerate() {
-                        match nested_child {
-                            TextElementChild::Object { .. } => {
-                                let nested_child_loro_map = LoroMap::new();
-                                txtelem_child_to_loro_map(nested_child, &nested_child_loro_map, depth + 1, max_depth);
-                                let _ = children_loro_list.insert_container(idx, nested_child_loro_map);
-                            }
-                            TextElementChild::String(s) => {
-                                let loro_text = children_loro_list.insert_container(idx, LoroText::new()).unwrap();
-                                let _ = loro_text.insert(0, s.as_str());
-                            }
-                        }
-                    }
-                }
-                TextElementChildrenOrString::AsString(s) => {
-                    let _ = loro_map.insert("children", s.as_str());
-                }
+    // Set the children
+    match &child.children {
+        TextElementChildrenOrString::AsChildren(children_vec) => {
+            let children_loro_list = loro_map.get_or_create_container("children", LoroList::new()).unwrap();
+            for (idx, nested_child) in children_vec.iter().enumerate() {
+                let nested_child_loro_map = LoroMap::new();
+                txtelem_child_to_loro_map(nested_child, &nested_child_loro_map, depth + 1, max_depth);
+                let _ = children_loro_list.insert_container(idx, nested_child_loro_map);
             }
         }
-        TextElementChild::String(s) => {
-            // If it's just a string, insert it directly
-            let _ = loro_map.insert("children", s.as_str());
+        TextElementChildrenOrString::AsStringArray(strings) => {
+            let children_loro_list = loro_map.get_or_create_container("children", LoroList::new()).unwrap();
+            for (idx, s) in strings.iter().enumerate() {
+                let loro_text = children_loro_list.insert_container(idx, LoroText::new()).unwrap();
+                let _ = loro_text.insert(0, s.as_str());
+            }
+        }
+        TextElementChildrenOrString::AsString(s) => {
+            let children_loro_list = loro_map.get_or_create_container("children", LoroList::new()).unwrap();
+            let loro_text = children_loro_list.insert_container(0, LoroText::new()).unwrap();
+            let _ = loro_text.insert(0, s.as_str());
         }
     }
 }

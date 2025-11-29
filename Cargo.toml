@@ -26,3 +26,5 @@ loro-protocol = { git = "https://github.com/loro-dev/protocol.git", rev = "278c3
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
 sea-query = "0.31"
 sea-query-binder = { version = "0.6", features = ["sqlx-postgres"] }
+moka = { version = "0.12", features = ["future"] }
+base64 = "0.22"

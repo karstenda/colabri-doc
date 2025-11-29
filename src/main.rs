@@ -58,6 +58,9 @@ async fn main() {
         warn!("No database URL configured - WebSocket document loading will not be available");
     }
 
+    // Initialize document cache
+    ws::wscolab::init_doc_cache().await;
+
     // Create API routes
     let api_routes = create_api_routes();
 
@@ -75,7 +78,7 @@ async fn main() {
     let ws_addr = format!("{}:{}", config.host, ws_port);
     let ws_config = ServerConfig {
         on_load_document: Some(std::sync::Arc::new(ws::wscolab::on_load_document)),
-        on_save_document: None, // TODO: Implement document saving
+        on_save_document: Some(std::sync::Arc::new(ws::wscolab::on_save_document)),
         save_interval_ms: Some(30_000), // Save every 30 seconds
         default_permission: loro_websocket_server::protocol::Permission::Write,
         authenticate: None, // TODO: Implement authentication if needed
