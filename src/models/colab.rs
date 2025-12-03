@@ -75,11 +75,11 @@ pub struct ColabStatementModel {
     pub colab_model: ColabModel,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
-    pub content: HashMap<String, ColabStatementBlock>,
+    pub content: HashMap<String, ColabStatementElement>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColabStatementBlock {
+pub struct ColabStatementElement {
     #[serde(rename = "textElement")]
     pub text_element: TextElement,
     #[serde(default, deserialize_with = "deserialize_null_default")]
@@ -176,14 +176,14 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
         }
     }
 
-    // Set the content (HashMap<String, ColabStatementBlock>)
+    // Set the content (HashMap<String, ColabStatementElement>)
     let content_loro_map = loro_doc.get_map("content");
     for (block_id, block) in &stmt_model.content {
 
         // Let's create a LoroMap for every block
         let block_loro_map = content_loro_map.get_or_create_container(block_id, LoroMap::new()).unwrap();
 
-        // Set the ACLs for this Statement block (HashMap<ColabModelPermission, Vec<String>>)
+        // Set the ACLs for this Statement element (HashMap<ColabModelPermission, Vec<String>>)
         let block_acls_loro_map = block_loro_map.get_or_create_container("acls", LoroMap::new()).unwrap();
         for (permission, principals) in &block.acls {
             let permission_str = permission.to_string();

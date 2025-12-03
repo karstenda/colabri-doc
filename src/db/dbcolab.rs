@@ -39,11 +39,11 @@ pub struct StatementDocument {
     pub id: uuid::Uuid,
     pub name: String,
     pub doc_type: String,
-    pub owner: uuid::Uuid,
+    pub owner: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub created_by: uuid::Uuid,
-    pub updated_by: uuid::Uuid,
+    pub created_by: String,
+    pub updated_by: String,
     pub json: Option<serde_json::Value>,
     pub acls: Vec<DocumentAclRow>,
     pub streams: Vec<DocumentStreamRow>,
@@ -63,8 +63,8 @@ pub struct DocumentStreamRow {
     pub size: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub created_by: Option<uuid::Uuid>,
-    pub updated_by: Option<uuid::Uuid>,
+    pub created_by: String,
+    pub updated_by: String,
     pub deleted: bool
 }
 
@@ -93,7 +93,7 @@ pub struct DocumentAclRow {
     pub prpl: String,
     pub permission: String,
     pub created_at: DateTime<Utc>,
-    pub created_by: Option<uuid::Uuid>
+    pub created_by: String
 }
 
 /// Database connection pool
@@ -196,7 +196,7 @@ impl DbColab {
                             'name', ds.name,
                             'document', ds.document,
                             'version', ds.version,
-                            'content', encode(ds.content, 'base64'),
+                            'content', replace(encode(ds.content, 'base64'), E'\n', ''),
                             'pointer', ds.pointer,
                             'size', ds.size,
                             'created_at', ds.created_at,
@@ -307,8 +307,8 @@ impl DbColab {
 
         // Execute the main query
         let query_sql = r#"
-            INSERT INTO document_streams(org, document, name, content, version, size)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO document_streams(org, document, name, content, version, size, created_by, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING id;
         "#;
         let row = sqlx::query(query_sql)
@@ -317,7 +317,9 @@ impl DbColab {
             .bind("main")
             .bind(snapshot)
             .bind(1) // version
-            .bind(snapshot_size) // size // created_by
+            .bind(snapshot_size) // size 
+            .bind("s/colab-doc") // created_by
+            .bind("s/colab-doc") // updated_by
             .fetch_optional(&mut *tx)
             .await?;
 
@@ -383,15 +385,16 @@ impl DbColab {
             SET content = $1,
                 size = $2,
                 updated_at = NOW(),
-                updated_by = NULL
-            WHERE org = $3
-                AND id = $4
+                updated_by = $3
+            WHERE org = $4
+                AND id = $5
                 AND deleted = FALSE
             RETURNING id;
         "#;
         let doc_stream_row = sqlx::query(update_stream_query_sql)
             .bind(snapshot)
             .bind(snapshot_size) // size
+            .bind("s/colab-doc")
             .bind(org)
             .bind(doc_stream_id)
             .fetch_optional(&mut *tx)
