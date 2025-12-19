@@ -1,15 +1,8 @@
 # Build stage
-FROM rust:alpine AS builder
-WORKDIR /myapp
+FROM rust:1-bookworm AS builder
 
-# Install system dependencies for building
-RUN apk add --no-cache \
-    musl-dev \
-    openssl-dev
-
-RUN rustup default nightly
-RUN rustup target add x86_64-unknown-linux-musl
-RUN rustup install nightly
+# Install nightly toolchain
+RUN rustup toolchain install nightly && rustup default nightly
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -27,17 +20,18 @@ RUN cargo build --release && rm src/main.rs
 COPY src ./src
 
 # Build the actual application
-RUN cargo build --locked --release
+RUN rm -f target/release/deps/colabri_doc* && cargo build --locked --release
 
 # Runtime stage
-FROM alpine:latest
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
-RUN adduser -D -s /bin/false -u 1000 colabri
+RUN useradd -m -u 1000 colabri
 
 # Set working directory in the container
 WORKDIR /app

@@ -1,5 +1,5 @@
 #[derive(Clone, Debug)]
-pub struct DocSession {
+pub struct DocContext {
     pub org: String,
     pub doc_id: uuid::Uuid,
     pub doc_stream_id: uuid::Uuid,

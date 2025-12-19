@@ -33,6 +33,22 @@ pub fn get_db() -> Option<Arc<DbColab>> {
     DB.get().cloned()
 }
 
+/// Document Row from database
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ViewableDocumentRow {
+    pub id: uuid::Uuid,
+    pub name: String,
+    #[sqlx(rename = "type")]
+    pub doc_type: String,
+    pub owner: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub created_by: String,
+    pub updated_by: String,
+    pub deleted: bool,
+    pub org: String,
+}
+
 /// Document with full metadata from the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatementDocument {
@@ -132,6 +148,73 @@ impl DbColab {
         &self.pool
     }
 
+
+    /// Get a document if the user has view access to it
+    ///
+    /// # Arguments
+    /// * `org` - Organization identifier
+    /// * `document_id` - The ID of the document to check
+    /// * `principals` - List of principals (user ID, roles, etc.)
+    ///
+    /// # Returns
+    /// * `Result<Option<ViewableDocumentRow>, SqlxError>` - The document if found and accessible
+    pub async fn get_viewable_document(
+        &self,
+        org: &str,
+        document_id: uuid::Uuid,
+        principals: &[String],
+    ) -> Result<Option<ViewableDocumentRow>, SqlxError> {
+        // Log pool stats before acquiring connection
+        let pool_idle = self.pool.num_idle() as u32;
+        let pool_size = self.pool.size();
+        info!("Checking view access for doc {} in org {}. Pool connections: {} idle, {} in use", 
+              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+
+        // Begin a transaction
+        let mut tx = match self.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to acquire connection from pool: {}. Pool state: {} idle, {} total", 
+                       e, self.pool.num_idle(), self.pool.size());
+                return Err(e);
+            }
+        };
+
+        // Set the policy context
+        let safe_org = org.replace("'", "''");
+        let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
+
+        sqlx::query(&policy_sql)
+            .execute(&mut *tx)
+            .await?;
+
+        let query_sql = r#"
+            SELECT DISTINCT d.*
+            FROM documents d
+            LEFT JOIN document_acl da ON d.id = da.document
+            WHERE
+                d.org = $1
+                AND (
+                        (da.permission = 'view' AND da.prpl = ANY($2::text[])) OR
+                        d.owner = ANY($2::text[]) OR
+                        CONCAT($1, '/f/admin') = ANY($2::text[]) OR
+                        'r/Colabri-CloudAdmin' = ANY($2::text[])
+                )
+                AND d.id = $3
+                AND d.deleted = FALSE
+        "#;
+
+        let document = sqlx::query_as::<_, ViewableDocumentRow>(query_sql)
+            .bind(org)
+            .bind(principals)
+            .bind(document_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+
+        Ok(document)
+    }
 
     /// Load a statement document by ID with ACL authorization
     ///
@@ -348,7 +431,7 @@ impl DbColab {
         doc_id: uuid::Uuid,
         doc_stream_id: uuid::Uuid,
         snapshot: Vec<u8>,
-        json: serde_json::Value,
+        _json: serde_json::Value,
     ) -> Result<uuid::Uuid, SqlxError> {
 
         // Calculate the size of the snapshot

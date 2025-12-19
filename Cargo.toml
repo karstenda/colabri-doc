@@ -21,10 +21,14 @@ futures-util = "0.3.31"
 loro = "^1"
 chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
-loro-websocket-server = { git = "https://github.com/loro-dev/protocol.git", rev = "278c30c8f5034af1073cecc848786a81f2ea9572", package = "loro-websocket-server"}
-loro-protocol = { git = "https://github.com/loro-dev/protocol.git", rev = "278c30c8f5034af1073cecc848786a81f2ea9572", package = "loro-protocol"}
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
+loro-websocket-server = { git = "https://github.com/karstenda/loro-protocol.git", rev = "6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c", package = "loro-websocket-server"}
+loro-protocol = { git = "https://github.com/karstenda/loro-protocol.git", rev = "6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c", package = "loro-protocol"}
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
 sea-query = "0.31"
 sea-query-binder = { version = "0.6", features = ["sqlx-postgres"] }
-moka = { version = "0.12", features = ["future"] }
+moka = { version = "0.12", features = ["future", "sync"] }
 base64 = "0.22"
+tokio-tungstenite = "0.28.0"
+cookie = "0.18.1"
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+reqwest = { version = "0.12.26", features = ["blocking", "json"] }

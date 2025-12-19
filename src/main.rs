@@ -6,6 +6,7 @@ mod docs;
 mod config;
 mod db;
 mod ws;
+mod clients;
 
 use axum::Router;
 use tower_http::trace::TraceLayer;
@@ -19,7 +20,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use std::panic;
 use loro_websocket_server::ServerConfig;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
 
     // Set panic hook for better error messages
@@ -39,11 +40,19 @@ async fn main() {
     info!("Starting server...");
 
     // Load configuration
-    let config = Config::load().unwrap_or_else(|e| {
+    let app_config = Config::load().unwrap_or_else(|e| {
         error!("Failed to load configuration: {}", e);
         warn!("Using default configuration");
         Config::default()
     });
+
+    // Initialize global configuration
+    if let Err(e) = config::init_config(app_config) {
+        error!("Failed to initialize global configuration: {}", e);
+        return;
+    }
+
+    let config = config::get_config();
 
     // Initialize database connection if URL is provided
     if let Some(db_url) = &config.db_url {
@@ -58,14 +67,34 @@ async fn main() {
         warn!("No database URL configured - WebSocket document loading will not be available");
     }
 
-    // Initialize document cache
-    ws::wscolab::init_doc_cache().await;
+    // Initialize user context cache
+    ws::wscolab::init_user_ctx_cache();
+
+    // Initialize connection context cache
+    ws::wscolab::init_conn_ctx_cache();
+
+    // Initialize App Service Client
+    if let Some(secret) = &config.cloud_auth_jwt_secret {
+        if let Err(e) = clients::app_service_client::init_app_service_client(
+            config.app_service_url(), 
+            secret.clone(), 
+            config.cloud_service_name.clone()
+        ) {
+            error!("Failed to initialize AppServiceClient: {}", e);
+        } else {
+            info!("AppServiceClient initialized successfully");
+        }
+    } else {
+        warn!("cloud_auth_jwt_secret not configured - AppServiceClient not initialized");
+    }
 
     // Create API routes
     let api_routes = create_api_routes();
 
     // Combine all routes
     let app_routes = Router::new()
+        .route("/health", axum::routing::get(handlers::health_check))
+        .route("/ready", axum::routing::get(handlers::ready_check))
         // Mount API routes
         .nest("/api", api_routes)
         // Mount Swagger UI
@@ -81,8 +110,8 @@ async fn main() {
         on_save_document: Some(std::sync::Arc::new(ws::wscolab::on_save_document)),
         save_interval_ms: Some(30_000), // Save every 30 seconds
         default_permission: loro_websocket_server::protocol::Permission::Write,
-        authenticate: None, // TODO: Implement authentication if needed
-        handshake_auth: None, // TODO: Implement handshake auth if needed
+        authenticate: Some(std::sync::Arc::new(ws::wscolab::on_authenticate)),
+        handshake_auth: Some(std::sync::Arc::new(ws::wscolab::on_auth_handshake))
     };
 
     // Start WebSocket server
@@ -111,4 +140,6 @@ async fn main() {
     axum::serve(listener, app_routes)
         .await
         .expect("Server failed to start");
+    
+    println!("DEBUG: Server exited");
 }
