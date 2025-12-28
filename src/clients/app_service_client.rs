@@ -4,6 +4,7 @@ use std::sync::Arc;
 use jsonwebtoken::{encode, Header, EncodingKey};
 use serde::{Serialize, Deserialize};
 use chrono::{Utc, Duration};
+use tracing::{info};
 
 static APP_SERVICE_CLIENT: OnceCell<Arc<AppServiceClient>> = OnceCell::const_new();
 
@@ -50,14 +51,37 @@ impl AppServiceClient {
             exp: expiration as usize,
         };
 
-        encode(&Header::default(), &claims, &EncodingKey::from_secret(self.jwt_secret.as_bytes()))
-            .expect("Failed to generate JWT")
+        let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(self.jwt_secret.as_bytes()))
+            .expect("Failed to generate JWT");
+
+        info!("Generated JWT token for AppServiceClient");
+        token
+    }
+
+    fn redact_token_preview(token: &str) -> String {
+        const VISIBLE: usize = 6;
+        if token.len() <= VISIBLE * 2 {
+            return token.to_string();
+        }
+        format!(
+            "{}...{}",
+            &token[..VISIBLE],
+            &token[token.len() - VISIBLE..]
+        )
     }
 
     /// Example method to make a request to the app service
     pub async fn get_prpls(&self, uid: &str) -> Result<serde_json::Value, reqwest::Error> {
         let token = self.generate_token();
         let url = format!("{}/auth/prpls/{}", self.base_url, uid);
+        info!(
+            request_url = %url,
+            auth_header = %format!(
+                "Bearer {}",
+                Self::redact_token_preview(&token)
+            ),
+            "Dispatching request to app service with Authorization header"
+        );
         self.client.get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send().await?.json().await

@@ -86,6 +86,49 @@ pub struct ColabStatementElement {
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub comments: Vec<ColabComment>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub approvals: Vec<ColabApproval>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColabApprovalState {
+    Draft,
+    Pending,
+    Approved,
+    Rejected
+}
+
+impl fmt::Display for ColabApprovalState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ColabApprovalState::Draft => write!(f, "draft"),
+            ColabApprovalState::Pending => write!(f, "pending"),
+            ColabApprovalState::Approved => write!(f, "approved"),
+            ColabApprovalState::Rejected => write!(f, "rejected"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabUserApproval {
+    pub state: ColabApprovalState,
+    pub user: uuid::Uuid,
+    pub date: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabGroupApproval {
+    pub state: ColabApprovalState,
+    pub group: uuid::Uuid,
+    pub approvals: Vec<ColabUserApproval>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ColabApproval {
+    User(ColabUserApproval),
+    Group(ColabGroupApproval),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +238,16 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
             }
         }
 
+        if !block.approvals.is_empty() {
+            // Mirror the approval workflow state so clients stay consistent in CRDT form.
+            let approvals_loro_list = block_loro_map.get_or_create_container("approvals", LoroList::new()).unwrap();
+            for (idx, approval) in block.approvals.iter().enumerate() {
+                let approval_loro_map = LoroMap::new();
+                colab_approval_to_loro_map(approval, &approval_loro_map);
+                let _ = approvals_loro_list.insert_container(idx, approval_loro_map);
+            }
+        }
+
         // Let's ignore comments for now.
 
         // Let's set the TextElement
@@ -204,6 +257,43 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
 
     // We should be done for now
     Some(loro_doc)
+}
+
+fn colab_approval_to_loro_map(approval: &ColabApproval, loro_map: &LoroMap) {
+    match approval {
+        ColabApproval::User(user_approval) => {
+            let _ = loro_map.insert("type", "user");
+            colab_user_approval_to_loro_map(user_approval, loro_map);
+        }
+        ColabApproval::Group(group_approval) => {
+            let _ = loro_map.insert("type", "group");
+            let state_str = group_approval.state.to_string();
+            let _ = loro_map.insert("state", state_str.as_str());
+
+            let group_str = group_approval.group.to_string();
+            let _ = loro_map.insert("group", group_str.as_str());
+
+            if !group_approval.approvals.is_empty() {
+                let nested_list = loro_map.get_or_create_container("approvals", LoroList::new()).unwrap();
+                for (idx, nested_approval) in group_approval.approvals.iter().enumerate() {
+                    let nested_map = LoroMap::new();
+                    colab_user_approval_to_loro_map(nested_approval, &nested_map);
+                    let _ = nested_list.insert_container(idx, nested_map);
+                }
+            }
+        }
+    }
+}
+
+fn colab_user_approval_to_loro_map(user_approval: &ColabUserApproval, loro_map: &LoroMap) {
+    let state_str = user_approval.state.to_string();
+    let _ = loro_map.insert("state", state_str.as_str());
+
+    let user_str = user_approval.user.to_string();
+    let _ = loro_map.insert("user", user_str.as_str());
+
+    let date_str = user_approval.date.to_rfc3339();
+    let _ = loro_map.insert("date", date_str.as_str());
 }
 
 fn txtelem_to_loro_doc(text_element: &TextElement, loro_map: &LoroMap) {

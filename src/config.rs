@@ -102,7 +102,7 @@ impl Config {
         if self.environment == "development" {
             "http://localhost:8080".to_string()
         } else {
-            format!("https://{}", self.cloud_app_service_domain)
+            format!("http://{}", self.cloud_app_service_domain)
         }
     }
     
