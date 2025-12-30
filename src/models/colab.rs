@@ -70,6 +70,16 @@ pub struct ColabModelProperties {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct _ColabSheetModel {
+    #[serde(flatten)]
+    pub colab_model: ColabModel,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub approvals: HashMap<String, ColabApproval>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColabStatementModel {
     #[serde(flatten)]
     pub colab_model: ColabModel,
@@ -87,7 +97,7 @@ pub struct ColabStatementElement {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub comments: Vec<ColabComment>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub approvals: Vec<ColabApproval>,
+    pub approvals: HashMap<String, ColabUserApproval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,11 +250,12 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
 
         if !block.approvals.is_empty() {
             // Mirror the approval workflow state so clients stay consistent in CRDT form.
-            let approvals_loro_list = block_loro_map.get_or_create_container("approvals", LoroList::new()).unwrap();
-            for (idx, approval) in block.approvals.iter().enumerate() {
-                let approval_loro_map = LoroMap::new();
-                colab_approval_to_loro_map(approval, &approval_loro_map);
-                let _ = approvals_loro_list.insert_container(idx, approval_loro_map);
+            let approvals_loro_map = block_loro_map.get_or_create_container("approvals", LoroMap::new()).unwrap();
+            for (approval_id, approval) in &block.approvals {
+                let approval_loro_map = approvals_loro_map
+                    .get_or_create_container(approval_id.as_str(), LoroMap::new())
+                    .unwrap();
+                colab_user_approval_to_loro_map(approval, &approval_loro_map);
             }
         }
 
@@ -259,6 +270,7 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
     Some(loro_doc)
 }
 
+#[allow(dead_code)]
 fn colab_approval_to_loro_map(approval: &ColabApproval, loro_map: &LoroMap) {
     match approval {
         ColabApproval::User(user_approval) => {
