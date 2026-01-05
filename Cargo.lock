@@ -310,6 +310,7 @@ dependencies = [
  "sea-query",
  "sea-query-binder",
  "serde",
+ "serde_cbor",
  "serde_json",
  "serde_with",
  "sqlx 0.8.6",
@@ -788,7 +789,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1091,6 +1092,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "half"
+version = "1.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "hash32"
@@ -1824,7 +1831,7 @@ dependencies = [
 [[package]]
 name = "loro-protocol"
 version = "0.1.0"
-source = "git+https://github.com/karstenda/loro-protocol.git?rev=6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c#6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c"
+source = "git+https://github.com/karstenda/loro-protocol.git?rev=519d850651d7a02b1b703f3de1bbfd3fb0360db5#519d850651d7a02b1b703f3de1bbfd3fb0360db5"
 
 [[package]]
 name = "loro-rle"
@@ -1846,7 +1853,7 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 [[package]]
 name = "loro-websocket-server"
 version = "0.1.0"
-source = "git+https://github.com/karstenda/loro-protocol.git?rev=6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c#6122a3a24b12ec60e6ef2fc0c6887b59d1fcb49c"
+source = "git+https://github.com/karstenda/loro-protocol.git?rev=519d850651d7a02b1b703f3de1bbfd3fb0360db5#519d850651d7a02b1b703f3de1bbfd3fb0360db5"
 dependencies = [
  "cookie",
  "futures-util",
@@ -2682,7 +2689,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2873,6 +2880,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+dependencies = [
+ "half",
+ "serde",
+]
+
+[[package]]
 name = "serde_columnar"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2919,15 +2936,15 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.145"
+version = "1.0.148"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
+checksum = "3084b546a1dd6289475996f182a22aba973866ea8e8b02c51d9f46b1336a22da"
 dependencies = [
  "itoa",
  "memchr",
- "ryu",
  "serde",
  "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -3550,7 +3567,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4260,7 +4277,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -4769,3 +4786,9 @@ dependencies = [
  "crossbeam-utils",
  "flate2",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30e0d8dffbae3d840f64bda38e28391faef673a7b5a6017840f2a106c8145868"

@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
-use tracing::{info, error};
 use tokio::sync::OnceCell;
+use tracing::{error, info};
 
 // Global configuration instance
 static CONFIG: OnceCell<Config> = OnceCell::const_new();
 
 /// Initialize the global configuration
 pub fn init_config(config: Config) -> Result<(), &'static str> {
-    CONFIG.set(config).map_err(|_| "Configuration already initialized")
+    CONFIG
+        .set(config)
+        .map_err(|_| "Configuration already initialized")
 }
 
 /// Get the global configuration
@@ -21,7 +23,7 @@ pub struct Config {
     /// Server host address
     #[serde(default = "default_host")]
     pub host: String,
-    
+
     /// Server port
     #[serde(default = "default_port")]
     pub port: u16,
@@ -48,7 +50,7 @@ pub struct Config {
     pub cloud_app_service_domain: String,
     #[serde(default = "default_root_service_domain")]
     pub cloud_root_domain: String,
-    
+
     /// CORS allowed origins
     #[serde(default = "default_cors_origins")]
     pub cloud_cors_origins: String,
@@ -73,7 +75,7 @@ impl Config {
             // Fallback to .env file
             dotenvy::dotenv().ok();
         }
-        
+
         // Load from environment variables using envy
         match envy::from_env::<Config>() {
             Ok(config) => {
@@ -86,7 +88,7 @@ impl Config {
             }
         }
     }
-    
+
     /// Get the full server address
     pub fn server_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
@@ -105,7 +107,6 @@ impl Config {
             format!("http://{}", self.cloud_app_service_domain)
         }
     }
-    
 }
 
 impl Default for Config {

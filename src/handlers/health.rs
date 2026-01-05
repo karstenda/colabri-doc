@@ -1,5 +1,5 @@
-use axum::Json;
 use crate::models::HealthResponse;
+use axum::Json;
 use tracing::debug;
 
 /// Health check endpoint

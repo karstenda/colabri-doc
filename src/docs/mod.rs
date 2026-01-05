@@ -1,5 +1,5 @@
-use utoipa::OpenApi;
 use crate::models::*;
+use utoipa::OpenApi;
 
 /// Health check endpoint
 #[utoipa::path(

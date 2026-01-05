@@ -1,12 +1,12 @@
-use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::{Error as SqlxError, Row};
-use sqlx::types::Json;
-use std::time::Duration;
-use std::sync::Arc;
-use tracing::{info, error};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::types::Json;
+use sqlx::{Error as SqlxError, Row};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::OnceCell;
+use tracing::{error, info};
 
 // Global database instance
 static DB: OnceCell<Arc<DbColab>> = OnceCell::const_new();
@@ -81,15 +81,15 @@ pub struct DocumentStreamRow {
     pub updated_at: DateTime<Utc>,
     pub created_by: String,
     pub updated_by: String,
-    pub deleted: bool
+    pub deleted: bool,
 }
 
 fn deserialize_base64_content<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    use base64::{Engine as _, engine::general_purpose};
-    
+    use base64::{engine::general_purpose, Engine as _};
+
     let opt: Option<String> = Option::deserialize(deserializer)?;
     match opt {
         Some(s) => general_purpose::STANDARD
@@ -109,7 +109,7 @@ pub struct DocumentAclRow {
     pub prpl: String,
     pub permission: String,
     pub created_at: DateTime<Utc>,
-    pub created_by: String
+    pub created_by: String,
 }
 
 /// Database connection pool
@@ -118,7 +118,6 @@ pub struct DbColab {
 }
 
 impl DbColab {
-
     /// Create a new database connection pool
     ///
     /// # Arguments
@@ -130,11 +129,11 @@ impl DbColab {
         info!("Connecting to database...");
 
         let pool = PgPoolOptions::new()
-            .max_connections(20)  // Increased from 5 to support more concurrent operations
-            .min_connections(2)   // Keep some connections alive
-            .acquire_timeout(Duration::from_secs(30))  // Increased from 3s to 30s
-            .idle_timeout(Duration::from_secs(600))    // Close idle connections after 10 minutes
-            .max_lifetime(Duration::from_secs(1800))   // Recycle connections after 30 minutes
+            .max_connections(20) // Increased from 5 to support more concurrent operations
+            .min_connections(2) // Keep some connections alive
+            .acquire_timeout(Duration::from_secs(30)) // Increased from 3s to 30s
+            .idle_timeout(Duration::from_secs(600)) // Close idle connections after 10 minutes
+            .max_lifetime(Duration::from_secs(1800)) // Recycle connections after 30 minutes
             .connect(database_url)
             .await?;
 
@@ -147,7 +146,6 @@ impl DbColab {
     pub fn _pool(&self) -> &PgPool {
         &self.pool
     }
-
 
     /// Get a document if the user has view access to it
     ///
@@ -167,15 +165,24 @@ impl DbColab {
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
-        info!("Checking view access for doc {} in org {}. Pool connections: {} idle, {} in use", 
-              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+        info!(
+            "Checking view access for doc {} in org {}. Pool connections: {} idle, {} in use",
+            document_id,
+            org,
+            pool_idle,
+            pool_size.saturating_sub(pool_idle)
+        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
-                error!("Failed to acquire connection from pool: {}. Pool state: {} idle, {} total", 
-                       e, self.pool.num_idle(), self.pool.size());
+                error!(
+                    "Failed to acquire connection from pool: {}. Pool state: {} idle, {} total",
+                    e,
+                    self.pool.num_idle(),
+                    self.pool.size()
+                );
                 return Err(e);
             }
         };
@@ -184,9 +191,7 @@ impl DbColab {
         let safe_org = org.replace("'", "''");
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
-        sqlx::query(&policy_sql)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
 
         let query_sql = r#"
             SELECT DISTINCT d.*
@@ -229,12 +234,16 @@ impl DbColab {
         org: &str,
         document_id: uuid::Uuid,
     ) -> Result<Option<StatementDocument>, SqlxError> {
-
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
-        info!("Loading document {} for org {}. Pool connections: {} idle, {} in use", 
-              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+        info!(
+            "Loading document {} for org {}. Pool connections: {} idle, {} in use",
+            document_id,
+            org,
+            pool_idle,
+            pool_size.saturating_sub(pool_idle)
+        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
@@ -251,9 +260,7 @@ impl DbColab {
         let safe_org = org.replace("'", "''");
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
-        sqlx::query(&policy_sql)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
 
         // Execute the main query
         let query_sql = r#"
@@ -310,13 +317,13 @@ impl DbColab {
 
         match row {
             Some(row) => {
-
                 let name: String = row.try_get("name")?;
                 info!("Document '{}' loaded successfully for org '{}'", name, org);
 
                 // Let's deserialize the streams and acls
-                let streams: Vec<DocumentStreamRow> = serde_json::from_value(row.try_get("streams")?)
-                    .map_err(|e| SqlxError::Decode(Box::new(e)))?;
+                let streams: Vec<DocumentStreamRow> =
+                    serde_json::from_value(row.try_get("streams")?)
+                        .map_err(|e| SqlxError::Decode(Box::new(e)))?;
                 let acls: Vec<DocumentAclRow> = serde_json::from_value(row.try_get("acls")?)
                     .map_err(|e| SqlxError::Decode(Box::new(e)))?;
 
@@ -336,7 +343,7 @@ impl DbColab {
                     updated_by: row.try_get("updated_by")?,
                     json,
                     acls,
-                    streams
+                    streams,
                 };
                 Ok(Some(doc))
             }
@@ -359,15 +366,19 @@ impl DbColab {
         document_id: uuid::Uuid,
         snapshot: Vec<u8>,
     ) -> Result<uuid::Uuid, SqlxError> {
-
         // Calculate the size of the snapshot
         let snapshot_size = snapshot.len() as i64;
 
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
-        info!("Creating document {} for org {}. Pool connections: {} idle, {} in use", 
-              document_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+        info!(
+            "Creating document {} for org {}. Pool connections: {} idle, {} in use",
+            document_id,
+            org,
+            pool_idle,
+            pool_size.saturating_sub(pool_idle)
+        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
@@ -384,9 +395,7 @@ impl DbColab {
         let safe_org = org.replace("'", "''");
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
-        sqlx::query(&policy_sql)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
 
         // Execute the main query
         let query_sql = r#"
@@ -400,7 +409,7 @@ impl DbColab {
             .bind("main")
             .bind(snapshot)
             .bind(1) // version
-            .bind(snapshot_size) // size 
+            .bind(snapshot_size) // size
             .bind("s/colab-doc") // created_by
             .bind("s/colab-doc") // updated_by
             .fetch_optional(&mut *tx)
@@ -408,7 +417,7 @@ impl DbColab {
 
         // Commit the transaction
         tx.commit().await?;
-        
+
         let returned_id: uuid::Uuid = row.unwrap().try_get("id")?;
         info!("Document Stream saved: {}", returned_id);
         Ok(returned_id)
@@ -430,25 +439,34 @@ impl DbColab {
         org: &str,
         doc_id: uuid::Uuid,
         doc_stream_id: uuid::Uuid,
-        snapshot: Vec<u8>,
-        _json: serde_json::Value,
+        colab_package_blob: Vec<u8>,
+        json: serde_json::Value,
+        by_prpl: &str,
     ) -> Result<uuid::Uuid, SqlxError> {
-
         // Calculate the size of the snapshot
-        let snapshot_size = snapshot.len() as i64;
+        let content_size = colab_package_blob.len() as i64;
 
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
-        info!("Updating doc {} with stream {} for org {}. Pool connections: {} idle, {} in use", 
-              doc_id, doc_stream_id, org, pool_idle, pool_size.saturating_sub(pool_idle));
+        info!(
+            "Updating doc {} with stream {} for org {}. Pool connections: {} idle, {} in use",
+            doc_id,
+            doc_stream_id,
+            org,
+            pool_idle,
+            pool_size.saturating_sub(pool_idle)
+        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
-                error!("Failed to acquire connection from pool. Pool state: {} idle, {} total", 
-                      self.pool.num_idle(), self.pool.size());
+                error!(
+                    "Failed to acquire connection from pool. Pool state: {} idle, {} total",
+                    self.pool.num_idle(),
+                    self.pool.size()
+                );
                 return Err(e);
             }
         };
@@ -458,9 +476,7 @@ impl DbColab {
         let safe_org = org.replace("'", "''");
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
-        sqlx::query(&policy_sql)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
 
         // Execute the main query
         let update_stream_query_sql = r#"
@@ -475,28 +491,56 @@ impl DbColab {
             RETURNING id;
         "#;
         let doc_stream_row = sqlx::query(update_stream_query_sql)
-            .bind(snapshot)
-            .bind(snapshot_size) // size
-            .bind("s/colab-doc")
+            .bind(colab_package_blob)
+            .bind(content_size) // size
+            .bind(by_prpl)
             .bind(org)
             .bind(doc_stream_id)
             .fetch_optional(&mut *tx)
             .await?;
 
+        // Execute the secondary query
+        let update_statement_query_sql = r#"
+        UPDATE document_statements
+            SET json = $1,
+                synced = FALSE,
+                updated_at = NOW(),
+                updated_by = $2
+            WHERE org = $3
+                AND document = $4
+            RETURNING document;
+        "#;
+        let doc_stmt_row = sqlx::query(update_statement_query_sql)
+            .bind(json)
+            .bind(by_prpl)
+            .bind(org)
+            .bind(doc_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
         // Commit the transaction
         tx.commit().await?;
-        
-        match doc_stream_row {
-            Some(row) => {
-                let returned_id: uuid::Uuid = row.try_get("id")?;
+
+        match (doc_stream_row, doc_stmt_row) {
+            (Some(stream_row), Some(_stmt_row)) => {
+                let returned_id: uuid::Uuid = stream_row.try_get("id")?;
                 info!("Document Stream updated: {}", returned_id);
                 Ok(returned_id)
             }
-            None => {
-                error!("Document stream not found for update: org={}, doc_stream={}", org, doc_stream_id);
+            (None, _) => {
+                error!(
+                    "Document stream not found for update: org={}, doc_stream={}",
+                    org, doc_stream_id
+                );
+                Err(SqlxError::RowNotFound)
+            }
+            (_, None) => {
+                error!(
+                    "Document statement not found for update: org={}, doc={}",
+                    org, doc_id
+                );
                 Err(SqlxError::RowNotFound)
             }
         }
     }
 }
-

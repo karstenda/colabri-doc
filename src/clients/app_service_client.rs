@@ -1,10 +1,10 @@
+use chrono::{Duration, Utc};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use reqwest::Client;
-use tokio::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use jsonwebtoken::{encode, Header, EncodingKey};
-use serde::{Serialize, Deserialize};
-use chrono::{Utc, Duration};
-use tracing::{info};
+use tokio::sync::OnceCell;
+use tracing::info;
 
 static APP_SERVICE_CLIENT: OnceCell<Arc<AppServiceClient>> = OnceCell::const_new();
 
@@ -30,7 +30,7 @@ impl AppServiceClient {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("Failed to build reqwest client");
-            
+
         Self {
             client,
             base_url,
@@ -51,8 +51,12 @@ impl AppServiceClient {
             exp: expiration as usize,
         };
 
-        let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(self.jwt_secret.as_bytes()))
-            .expect("Failed to generate JWT");
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
+        )
+        .expect("Failed to generate JWT");
 
         info!("Generated JWT token for AppServiceClient");
         token
@@ -82,18 +86,27 @@ impl AppServiceClient {
             ),
             "Dispatching request to app service with Authorization header"
         );
-        self.client.get(&url)
+        self.client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?.json().await
+            .send()
+            .await?
+            .json()
+            .await
     }
-    
+
     // Add more methods here as needed
 }
 
 /// Initialize the global AppServiceClient
-pub fn init_app_service_client(base_url: String, jwt_secret: String, service_name: String) -> Result<(), &'static str> {
+pub fn init_app_service_client(
+    base_url: String,
+    jwt_secret: String,
+    service_name: String,
+) -> Result<(), &'static str> {
     let client = AppServiceClient::new(base_url, jwt_secret, service_name);
-    APP_SERVICE_CLIENT.set(Arc::new(client))
+    APP_SERVICE_CLIENT
+        .set(Arc::new(client))
         .map_err(|_| "AppServiceClient already initialized")
 }
 

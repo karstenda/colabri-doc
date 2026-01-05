@@ -1,28 +1,27 @@
-mod models;
-mod handlers;
-mod routes;
 mod docs;
+mod handlers;
+mod models;
+mod routes;
 // mod websocket; // No longer needed - using loro-websocket-server directly
+mod clients;
 mod config;
 mod db;
 mod ws;
-mod clients;
 
 use axum::Router;
+use config::Config;
+use docs::ApiDoc;
+use loro_websocket_server::ServerConfig;
+use routes::create_api_routes;
+use std::panic;
 use tower_http::trace::TraceLayer;
+use tracing::{error, info, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use routes::create_api_routes;
-use docs::ApiDoc;
-use config::Config;
-use tracing::{info, error, warn};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use std::panic;
-use loro_websocket_server::ServerConfig;
 
 #[tokio::main]
 async fn main() {
-
     // Set panic hook for better error messages
     panic::set_hook(Box::new(|info| {
         eprintln!("PANIC: {info}");
@@ -76,9 +75,9 @@ async fn main() {
     // Initialize App Service Client
     if let Some(secret) = &config.cloud_auth_jwt_secret {
         if let Err(e) = clients::app_service_client::init_app_service_client(
-            config.app_service_url(), 
-            secret.clone(), 
-            config.cloud_service_name.clone()
+            config.app_service_url(),
+            secret.clone(),
+            config.cloud_service_name.clone(),
         ) {
             error!("Failed to initialize AppServiceClient: {}", e);
         } else {
@@ -111,19 +110,24 @@ async fn main() {
         save_interval_ms: Some(30_000), // Save every 30 seconds
         default_permission: loro_websocket_server::protocol::Permission::Write,
         authenticate: Some(std::sync::Arc::new(ws::wscolab::on_authenticate)),
-        handshake_auth: Some(std::sync::Arc::new(ws::wscolab::on_auth_handshake))
+        handshake_auth: Some(std::sync::Arc::new(ws::wscolab::on_auth_handshake)),
+        on_close_connection: Some(std::sync::Arc::new(ws::wscolab::on_close_connection)),
+        on_update: Some(std::sync::Arc::new(ws::wscolab::on_update)),
+        ..Default::default()
     };
 
     // Start WebSocket server
     let ws_listener = tokio::net::TcpListener::bind(&ws_addr)
         .await
         .unwrap_or_else(|_| panic!("Failed to bind WebSocket server to {}", ws_addr));
-    
+
     info!("📡 WebSocket server starting on ws://{}", ws_addr);
-    
+
     // Spawn WebSocket server task
     tokio::spawn(async move {
-        if let Err(e) = loro_websocket_server::serve_incoming_with_config(ws_listener, ws_config).await {
+        if let Err(e) =
+            loro_websocket_server::serve_incoming_with_config(ws_listener, ws_config).await
+        {
             error!("WebSocket server error: {}", e);
         }
     });
@@ -132,14 +136,17 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(config.server_address())
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {}", config.server_address()));
-        
+
     info!("🚀 Server running on http://{}", config.server_address());
     info!("📡 WebSocket available at ws://{}", ws_addr);
-    info!("📚 Swagger UI available at http://{}/swagger", config.server_address());
+    info!(
+        "📚 Swagger UI available at http://{}/swagger",
+        config.server_address()
+    );
 
     axum::serve(listener, app_routes)
         .await
         .expect("Server failed to start");
-    
+
     println!("DEBUG: Server exited");
 }

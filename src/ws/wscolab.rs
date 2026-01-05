@@ -1,6 +1,6 @@
-﻿use loro::{ LoroDoc, ToJson};
-use loro_protocol::CrdtType;
-use loro_websocket_server::{LoadDocArgs, SaveDocArgs, LoadedDoc, AuthArgs, HandshakeAuthArgs};
+use loro::{ LoroDoc, ToJson};
+use loro_protocol::{CrdtType, UpdateStatusCode};
+use loro_websocket_server::{AuthArgs, CloseConnectionArgs, HandshakeAuthArgs, LoadDocArgs, LoadedDoc, SaveDocArgs, UpdateArgs, UpdatedDoc};
 use loro_websocket_server::protocol::Permission;
 use tracing::{info, warn, error};
 use uuid::Uuid;
@@ -9,8 +9,10 @@ use std::future::Future;
 use moka::sync::Cache;
 use std::time::Duration;
 use std::sync::OnceLock;
+use serde_cbor;
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
+use crate::models::ColabPackage;
 use crate::{db::dbcolab::{self, DocumentStreamRow}, clients::app_service_client ,models::ColabStatementModel};
 use super::doccontext::DocContext;
 use super::userctx::UserCtx;
@@ -27,8 +29,8 @@ static CONN_CTX_CACHE: OnceLock<Cache<u64, ConnCtx>> = OnceLock::new();
 pub fn init_user_ctx_cache() {
     USER_CTX_CACHE.get_or_init(|| {
         Cache::builder()
-            .max_capacity(1000000) // Adjust based on your needs
-            .time_to_idle(Duration::from_secs(300)) // 5 minutes TTL
+            .max_capacity(100000) // Adjust based on your needs
+            .time_to_idle(Duration::from_secs(5*60)) //5 minutes TTL
             .build()
     });
     info!("User cache initialized");
@@ -42,12 +44,12 @@ fn get_user_ctx_cache() -> &'static Cache<String, UserCtx> {
 /// Initialize the connection context cache
 /// 
 /// This should be called once at application startup.
-/// The cache will automatically evict entries after 10 minutes of inactivity.
+/// The cache will automatically evict entries after 3 hours of inactivity.
 pub fn init_conn_ctx_cache() {
     CONN_CTX_CACHE.get_or_init(|| {
         Cache::builder()
-            .max_capacity(1000000) // Adjust based on your needs
-            .time_to_idle(Duration::from_secs(600)) // 10 minutes TTL
+            .max_capacity(100000) // Adjust based on your needs
+            .time_to_idle(Duration::from_secs(3*60*60)) // 3 hours TTL
             .build()
     });
     info!("Connection context cache initialized");
@@ -266,6 +268,21 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
     })
 }
 
+/// Hanlde the closing of a connection
+/// 
+/// # Arguments
+/// * `args` - Close Connection arguments
+pub fn on_close_connection(args: CloseConnectionArgs) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+    Box::pin(async move {
+        let conn_id = args.conn_id;
+        // Remove from connection context cache
+        let conn_ctx_cache = get_conn_ctx_cache();
+        conn_ctx_cache.invalidate(&conn_id);
+        info!("Connection context removed for connection_id: {}", conn_id);
+        Ok(())
+    })
+}
+
 
 /// Load a document from storage
 /// 
@@ -356,11 +373,31 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                 // Export the LoroDoc as a byte stream
                 let snapshot = loro_doc.export(loro::ExportMode::Snapshot).unwrap();
 
+                // Create the peer map with the current peer
+                let mut peer_map: HashMap<u64, String> = HashMap::new();
+                peer_map.insert(loro_doc.peer_id(), "s/colab-doc".to_string());
+
+                // Put it in a ColabPackage
+                // Create the ColabPackage to store in the database
+                let colab_package = ColabPackage {
+                    snapshot: snapshot.clone(),
+                    peer_map: peer_map,
+                };
+
+                // Serialize the ColabPackage to CBOR
+                let blob = match serde_cbor::to_vec(&colab_package) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to serialize ColabPackage for document '{}': {}", doc_id, e);
+                        return Err(format!("Failed to serialize ColabPackage: {}", e));
+                    }
+                };
+
                 // Store the generated snapshot as a new stream in the database
                 let docstream_id = match db.insert_statement_doc_stream(
                     &org_id,
                     doc_uuid,
-                    snapshot.clone()
+                    blob
                 ).await {
                     Ok(id) => id,
                     Err(e) => {
@@ -369,11 +406,17 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                     }
                 };
 
+                // Create the peer map with the current peer
+                let mut peer_map: HashMap<u64, String> = HashMap::new();
+                peer_map.insert(loro_doc.peer_id(), "s/colab-doc".to_string());
+
                 // Create DocContext
                 let context = DocContext {
                     org: org_id.clone(),
                     doc_id: doc_uuid.clone(),
-                    doc_stream_id: docstream_id.clone()
+                    doc_stream_id: docstream_id.clone(),
+                    peer_map: peer_map,
+                    last_updating_peer: Some(loro_doc.peer_id()),
                 };
 
                 return Ok(LoadedDoc { snapshot: Some(snapshot), ctx: Some(context) });
@@ -387,15 +430,30 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
         // Import the content into the LoroDoc
         else {
 
+            // Deserialize the CBOR formatted "main_stream_bytes" into a ColabPackage
+            let colab_package : ColabPackage = match serde_cbor::from_slice(&main_stream_bytes.unwrap()) {
+                Ok(pkg) => pkg,
+                Err(e) => {
+                    error!("Failed to deserialize ColabPackage for document '{}': {}", doc_uuid.to_string(), e);
+                    return Err(format!("Failed to deserialize ColabPackage: {}", e));
+                }
+            };
+
+            // Get the peer map
+            let loro_snapshot = colab_package.snapshot;
+            let peer_map = colab_package.peer_map;
+
             // Create DocContext
             let context = DocContext {
                 org: org_id.clone(),
                 doc_id: doc_uuid.clone(),
                 doc_stream_id: main_stream.unwrap().id.clone(),
+                peer_map: peer_map,
+                last_updating_peer: None,
             };
 
             info!("Successfully loaded document: {} ({} bytes)", doc_uuid.to_string(), main_stream_bytes.unwrap().len());
-            return Ok(LoadedDoc { snapshot: main_stream_bytes.cloned(), ctx: Some(context) });
+            return Ok(LoadedDoc { snapshot: Some(loro_snapshot), ctx: Some(context) });
         }
     })
 }
@@ -425,17 +483,50 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
         info!("Saving loro document for room: {}", doc_id);
 
         // Check if context is available
-        let context = match context {
+        let mut context = match context {
             Some(ctx) => ctx,
             None => {
-                error!("No context available for document: {}", doc_id);
-                return Err("No context available".to_string());
+                error!("No doc context available when saving for document: {}", doc_id);
+                return Err("No doc context available when saving".to_string());
             }
         };
 
+        // Get document identifiers
         let org = context.org.clone();
         let doc_uuid = context.doc_id.clone();
         let doc_stream_uuid = context.doc_stream_id.clone();
+
+        // Get the principal that updated the document most recently
+        let updating_peer_id = match context.last_updating_peer {
+            Some(pid) => pid,
+            None => {
+                // No updating peer, nothing to save
+                info!("Aborting save. No last updating peer found in context for document: {}", doc_uuid);
+                return Ok(());
+            }
+        };
+        let by_prpl = match context.peer_map.get(&updating_peer_id) {
+            Some(prpl) => prpl.clone(),
+            None => {
+                error!("Error Saving. No principal found for updating peer {} in document: {}", updating_peer_id, doc_uuid);
+                return Err("No principal found for updating peer".to_string());
+            }
+        };
+
+        // Create the ColabPackage to store in the database
+        let colab_package = ColabPackage {
+            snapshot: snapshot.clone(),
+            peer_map: context.peer_map.clone(),
+        };
+
+        // Serialize the ColabPackage to CBOR
+        let blob = match serde_cbor::to_vec(&colab_package) {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to serialize ColabPackage for document '{}': {}", doc_id, e);
+                return Err(format!("Failed to serialize ColabPackage: {}", e));
+            }
+        };
 
         // Get database connection
         let db = match dbcolab::get_db() {
@@ -458,7 +549,7 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
         let json = loro_value.to_json_value();
         
         // Save to database with incremented version
-        match db.update_statement(&org, doc_uuid, doc_stream_uuid, snapshot, json).await {
+        match db.update_statement(&org, doc_uuid, doc_stream_uuid, blob, json, &by_prpl).await {
             Ok(_) => {
                 info!("Statement updated successfully {}", doc_uuid);
             }
@@ -468,6 +559,147 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
             }
         }
 
+        // Clear the last updating peer in the context
+        context.last_updating_peer = None;
+
         return Ok(());
+    })
+}
+
+/// Handle document updates
+/// 
+/// This function is called whenever a client sends updates to a document.
+/// It should validate the updates.
+pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = UpdatedDoc<DocContext>> + Send + 'static>> {
+    Box::pin(async move {
+        
+        // Get the connection ID
+        let conn_id = args.conn_id;
+        let room_id = args.room;
+
+        // We're currently only interested in Loro updates
+        if args.crdt != CrdtType::Loro {
+            return UpdatedDoc {
+                status: UpdateStatusCode::Ok,
+                ctx: args.ctx,
+                doc: None,
+            };
+        }
+
+        // Check if the UID of this peer matches the current UID of this connection
+        let mut doc_ctx = match args.ctx {
+            Some(ctx) => ctx,
+            None => {
+                error!("When updating document: No context available for document: {} ({} updates)", room_id, args.updates.len());
+                return UpdatedDoc {
+                    status: UpdateStatusCode::Unknown,
+                    ctx: None,
+                    doc: None,
+                };
+            }
+        };
+
+        // Figure out which user is behind this connection
+        let conn_ctx_cache = get_conn_ctx_cache();
+        let conn_ctx = match conn_ctx_cache.get(&conn_id) {
+            Some(ctx) => ctx,
+            None => {
+                error!("No connection context found for connection_id: {}", conn_id);
+                return UpdatedDoc {
+                    status: UpdateStatusCode::PermissionDenied,
+                    ctx: Some(doc_ctx),
+                    doc: None,
+                };
+            }
+        };
+        let uid = &conn_ctx.uid;
+        info!("Received update from user: {} on doc: {}", uid, room_id);
+
+        // Ensure we have a loro document
+        let loro_doc = match args.doc {
+            Some(ref doc) => doc,
+            None => {
+                error!("No LoroDoc available while processing update for doc: {}", room_id);
+                return UpdatedDoc {
+                    status: UpdateStatusCode::Unknown,
+                    ctx: Some(doc_ctx),
+                    doc: None,
+                };
+            }
+        };
+
+        // Get the initial peers in the document
+        let init_version_vector = loro_doc.oplog_vv();
+
+        // Apply the updates
+        let _ = loro_doc.import_batch(&args.updates);
+
+        // Get the updated version vector
+        let updated_version_vector = loro_doc.oplog_vv();
+
+        // Figure out which peer did the update by comparing the version vectors
+        let mut updating_peer: Option<u64> = None;
+        for peer_id in updated_version_vector.keys().cloned() {
+            let updated_version = updated_version_vector.get(&peer_id).unwrap();
+            let init_version = init_version_vector.get(&peer_id).cloned().unwrap_or(0);
+            if updated_version > &init_version {
+                updating_peer = Some(peer_id);
+                break;
+            }
+        }
+
+        // Make sure we found the updating peer
+        let updating_peer_id = match updating_peer {
+            Some(pid) => pid,
+            None => {
+                info!("Update resulted in no operations for doc: {}", room_id);
+                return UpdatedDoc {
+                    status: UpdateStatusCode::Ok,
+                    ctx: Some(doc_ctx),
+                    doc: Some(loro_doc.clone()),
+                };
+            }
+        };
+
+        // Check if this peer is already known in the peer_map in the document context
+        let peer_map = &mut doc_ctx.peer_map;
+        let ok_peer = match peer_map.get(&updating_peer_id) {
+            Some(found_prpl) => {
+                // Generate the prpl for this user
+                let allowed_prpl = format!("{}/u/{}", conn_ctx.org_id, uid);
+                if *found_prpl != allowed_prpl {
+                    false
+                } else {
+                    true
+                }
+            }
+            None => {
+                // No principal found for this peer, that's fine just add it.
+                info!("Adding new peer {} for user {} in document {}", updating_peer_id, uid, room_id);
+                peer_map.insert(updating_peer_id, format!("{}/u/{}", conn_ctx.org_id, uid));
+                true
+            },
+        };
+
+        // If the peer was not ok, reject the update
+        if !ok_peer {
+            error!("User {} attempted to update document {} with invalid peer {}", uid, room_id, updating_peer_id);
+            return UpdatedDoc {
+                status: UpdateStatusCode::PermissionDenied,
+                ctx: Some(doc_ctx),
+                doc: None,
+            };
+        }
+
+        // Update the last updating peer in the document context
+        info!("User {} updated document {} with peer {}", uid, room_id, updating_peer_id);
+        doc_ctx.last_updating_peer = Some(updating_peer_id);
+
+        // Return OK
+        return UpdatedDoc {
+            status: UpdateStatusCode::Ok,
+            ctx: Some(doc_ctx),
+            doc: Some(loro_doc.clone()),
+        };
     })
 }
