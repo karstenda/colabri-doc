@@ -67,10 +67,10 @@ async fn main() {
     }
 
     // Initialize user context cache
-    ws::wscolab::init_user_ctx_cache();
+    ws::userctx::init_user_ctx_cache();
 
     // Initialize connection context cache
-    ws::wscolab::init_conn_ctx_cache();
+    ws::connctx::init_conn_ctx_cache();
 
     // Initialize App Service Client
     if let Some(secret) = &config.cloud_auth_jwt_secret {

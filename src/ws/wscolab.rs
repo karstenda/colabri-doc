@@ -6,59 +6,22 @@ use tracing::{info, warn, error};
 use uuid::Uuid;
 use std::{collections::HashMap, pin::Pin};
 use std::future::Future;
-use moka::sync::Cache;
-use std::time::Duration;
-use std::sync::OnceLock;
 use serde_cbor;
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
 use crate::models::ColabPackage;
 use crate::{db::dbcolab::{self, DocumentStreamRow}, clients::app_service_client ,models::ColabStatementModel};
-use super::doccontext::DocContext;
-use super::userctx::UserCtx;
-use super::connctx::ConnCtx;
+use super::docctx::{DocContext};
+use super::userctx::{self};
+use super::connctx::{self, ConnCtx};
 
-/// Global cache instances
-static USER_CTX_CACHE: OnceLock<Cache<String, UserCtx>> = OnceLock::new();
-static CONN_CTX_CACHE: OnceLock<Cache<u64, ConnCtx>> = OnceLock::new();
-
-/// Initialize the user cache
-/// 
-/// This should be called once at application startup.
-/// The cache will automatically evict entries after 5 minutes of inactivity.
-pub fn init_user_ctx_cache() {
-    USER_CTX_CACHE.get_or_init(|| {
-        Cache::builder()
-            .max_capacity(100000) // Adjust based on your needs
-            .time_to_idle(Duration::from_secs(5*60)) //5 minutes TTL
-            .build()
-    });
-    info!("User cache initialized");
+fn user_has_org_access(principals: &[String], org_id: &str) -> bool {
+    let org_prefix = format!("{}/u/", org_id);
+    principals.iter().any(|principal| {
+        principal.starts_with(&org_prefix) || principal == "r/Colabri-CloudAdmin"
+    })
 }
 
-/// Get the user cache instance
-fn get_user_ctx_cache() -> &'static Cache<String, UserCtx> {
-    USER_CTX_CACHE.get().expect("User cache not initialized. Call init_user_ctx_cache() first.")
-}
-
-/// Initialize the connection context cache
-/// 
-/// This should be called once at application startup.
-/// The cache will automatically evict entries after 3 hours of inactivity.
-pub fn init_conn_ctx_cache() {
-    CONN_CTX_CACHE.get_or_init(|| {
-        Cache::builder()
-            .max_capacity(100000) // Adjust based on your needs
-            .time_to_idle(Duration::from_secs(3*60*60)) // 3 hours TTL
-            .build()
-    });
-    info!("Connection context cache initialized");
-}
-
-/// Get the connection context cache instance
-fn get_conn_ctx_cache() -> &'static Cache<u64, ConnCtx> {
-    CONN_CTX_CACHE.get().expect("Connection context cache not initialized. Call init_conn_ctx_cache() first.")
-}
 
 /// Authenticate a client
 ///
@@ -107,86 +70,26 @@ pub fn on_auth_handshake(args: HandshakeAuthArgs) -> bool {
                 if let Some(uid) = token_data.claims.get("sub").and_then(|v| v.as_str()) {
                     info!("JWT token validated successfully for user: {}", uid);
                     
-                    if let Some(client) = app_service_client::get_app_service_client() {
-                        let client = client.clone();
-                        let uid_string = uid.to_string();
-                        
-                        // Use block_in_place to run async code synchronously
-                        let result = tokio::task::block_in_place(move || {
-                            let (tx, rx) = std::sync::mpsc::channel();
-                            tokio::spawn(async move {
-                                let res = client.get_prpls(&uid_string).await;
-                                let _ = tx.send(res);
-                            });
-                            rx.recv()
-                        });
-
-                        match result {
-                            Ok(Ok(prpls_json)) => {
-                                info!("Retrieved principals for user {}: {}", uid, prpls_json);
-                                
-                                // Parse principals from JSON
-                                let principals: Vec<String> = if let Some(prpls_val) = prpls_json.get("prpls") {
-                                    serde_json::from_value(prpls_val.clone())
-                                        .unwrap_or_else(|e| {
-                                            error!("Failed to parse principals array from 'prpls' field: {}", e);
-                                            Vec::new()
-                                        })
-                                } else {
-                                    serde_json::from_value(prpls_json)
-                                        .unwrap_or_else(|e| {
-                                            error!("Failed to parse principals JSON: {}", e);
-                                            Vec::new()
-                                        })
-                                };
-                                
-                                // Ensure there's at least one principal for the organization
-                                // Iterate over principals and check for one that starts with "org:{workspace_id}:"
-                                let mut has_org_principal = false;
-                                for principal in &principals {
-                                    if principal.starts_with(&format!("{}/u/", org_id)) {
-                                        has_org_principal = true;
-                                        break;
-                                    } else if principal.eq("r/Colabri-CloudAdmin") {
-                                        has_org_principal = true;
-                                        break;
-                                    }
-                                }
-
-                                if !has_org_principal {
-                                    error!("User {} does not have access to organization {}", uid, org_id);
-                                    return false;
-                                }
-
-                                // Store in user cache (sync)
-                                let user_ctx = UserCtx {
-                                    principals,
-                                };
-                                let user_ctx_cache = get_user_ctx_cache();
-                                user_ctx_cache.insert(uid.to_string(), user_ctx);
-
-                                // Store in connection context cache (sync)
+                    return match userctx::get_or_fetch_user_ctx_blocking(uid) {
+                        Ok(user_ctx) => {
+                            if !user_has_org_access(&user_ctx.principals, &org_id) {
+                                error!("User {} does not have access to organization {}", uid, org_id);
+                                false
+                            } else {
                                 let conn_ctx = ConnCtx {
                                     uid: uid.to_string(),
                                     org_id: org_id.to_string(),
                                 };
-                                let conn_ctx_cache = get_conn_ctx_cache();
+                                let conn_ctx_cache = connctx::get_conn_ctx_cache();
                                 conn_ctx_cache.insert(args.conn_id, conn_ctx);
                                 true
                             }
-                            Ok(Err(e)) => {
-                                error!("Failed to retrieve principals for user {}: {}", uid, e);
-                                false
-                            }
-                            Err(e) => {
-                                error!("Failed to receive result from async task: {}", e);
-                                false
-                            }
                         }
-                    } else {
-                        error!("App service client not initialized");
-                        false
-                    }
+                        Err(e) => {
+                            error!("Failed to load user context for {}: {}", uid, e);
+                            false
+                        }
+                    };
                 } else {
                     error!("Can't extract a UID from the JWT token");
                     false
@@ -215,7 +118,7 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
         let doc_id: String = args.room;
 
         // Get the connection context from the cache
-        let conn_ctx_cache = get_conn_ctx_cache();
+        let conn_ctx_cache = connctx::get_conn_ctx_cache();
         let conn_ctx = match conn_ctx_cache.get(&args.conn_id) {
             Some(ctx) => ctx,
             None => {
@@ -224,15 +127,19 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
             }
         };
 
-        // Get the user context from the cache
-        let user_ctx_cache = get_user_ctx_cache();
-        let user_ctx = match user_ctx_cache.get(&conn_ctx.uid) {
-            Some(ctx) => ctx,
-            None => {
-                error!("No user context found for uid: {}", conn_ctx.uid);
-                return Err("No user context found".to_string());
+        let uid_for_fetch = conn_ctx.uid.clone();
+        let org_for_fetch = conn_ctx.org_id.clone();
+        let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid_for_fetch).await {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Unable to load user context for uid {}: {}", conn_ctx.uid, e);
+                return Err(e);
             }
         };
+        if !user_has_org_access(&user_ctx.principals, &org_for_fetch) {
+            error!("User {} does not have access to organization {}", conn_ctx.uid, org_for_fetch);
+            return Err("User lacks access to organization".to_string());
+        }
 
         // Check if the user can view the document
         let db = match dbcolab::get_db() {
@@ -276,7 +183,7 @@ pub fn on_close_connection(args: CloseConnectionArgs) -> Pin<Box<dyn Future<Outp
     Box::pin(async move {
         let conn_id = args.conn_id;
         // Remove from connection context cache
-        let conn_ctx_cache = get_conn_ctx_cache();
+        let conn_ctx_cache = connctx::get_conn_ctx_cache();
         conn_ctx_cache.invalidate(&conn_id);
         info!("Connection context removed for connection_id: {}", conn_id);
         Ok(())
@@ -381,7 +288,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                 // Create the ColabPackage to store in the database
                 let colab_package = ColabPackage {
                     snapshot: snapshot.clone(),
-                    peer_map: peer_map,
+                    peer_map: peer_map.clone(),
                 };
 
                 // Serialize the ColabPackage to CBOR
@@ -406,16 +313,12 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                     }
                 };
 
-                // Create the peer map with the current peer
-                let mut peer_map: HashMap<u64, String> = HashMap::new();
-                peer_map.insert(loro_doc.peer_id(), "s/colabri-doc".to_string());
-
                 // Create DocContext
                 let context = DocContext {
                     org: org_id.clone(),
                     doc_id: doc_uuid.clone(),
                     doc_stream_id: docstream_id.clone(),
-                    peer_map: peer_map,
+                    peer_map: peer_map.clone(),
                     last_updating_peer: Some(loro_doc.peer_id()),
                 };
 
@@ -593,6 +496,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         // Get the connection ID
         let conn_id = args.conn_id;
         let room_id = args.room;
+        let org_id = args.workspace;
 
         // We're currently only interested in Loro updates
         if args.crdt != CrdtType::Loro {
@@ -617,7 +521,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         };
 
         // Figure out which user is behind this connection
-        let conn_ctx_cache = get_conn_ctx_cache();
+        let conn_ctx_cache = connctx::get_conn_ctx_cache();
         let conn_ctx = match conn_ctx_cache.get(&conn_id) {
             Some(ctx) => ctx,
             None => {
@@ -629,8 +533,41 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
                 };
             }
         };
-        let uid = &conn_ctx.uid;
+        let uid = conn_ctx.uid.clone();
+        let conn_org = conn_ctx.org_id.clone();
         info!("Received update from user: {} on doc: {}", uid, room_id);
+
+        let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid).await {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Unable to load user context for uid {}: {}", uid, e);
+                return UpdatedDoc {
+                    status: UpdateStatusCode::PermissionDenied,
+                    ctx: Some(doc_ctx),
+                    doc: None,
+                };
+            }
+        };
+        if !user_has_org_access(&user_ctx.principals, &conn_org) {
+            error!("User {} does not have access to organization {}", uid, conn_org);
+            return UpdatedDoc {
+                status: UpdateStatusCode::PermissionDenied,
+                ctx: Some(doc_ctx),
+                doc: None,
+            };
+        }
+        let user_prpls = &user_ctx.principals;
+        let by_prpl = match user_ctx.get_user_principal(&org_id) {
+            Some(prpl) => prpl,
+            None => {
+                error!("No principal found for user {} in organization {}", uid, org_id);
+                return UpdatedDoc {
+                    status: UpdateStatusCode::PermissionDenied,
+                    ctx: Some(doc_ctx),
+                    doc: None,
+                };
+            }
+        };
 
         // Ensure we have a loro document
         let loro_doc = match args.doc {
@@ -682,9 +619,8 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         let peer_map = &mut doc_ctx.peer_map;
         let ok_peer = match peer_map.get(&updating_peer_id) {
             Some(found_prpl) => {
-                // Generate the prpl for this user
-                let allowed_prpl = format!("{}/u/{}", conn_ctx.org_id, uid);
-                if *found_prpl != allowed_prpl {
+                // Check if this principal is one of the user principals
+                if !user_prpls.contains(found_prpl) {
                     false
                 } else {
                     true
@@ -693,7 +629,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
             None => {
                 // No principal found for this peer, that's fine just add it.
                 info!("Adding new peer {} for user {} in document {}", updating_peer_id, uid, room_id);
-                peer_map.insert(updating_peer_id, format!("{}/u/{}", conn_ctx.org_id, uid));
+                peer_map.insert(updating_peer_id, by_prpl.clone());
                 true
             },
         };
