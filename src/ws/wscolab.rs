@@ -362,7 +362,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                 };
                 
                 // Convert the statement model to LoroDoc
-                let loro_doc = match crate::models::colab::stmt_to_loro_doc(&stmt_model) {
+                let loro_doc = match crate::models::colabdoc::stmt_to_loro_doc(&stmt_model) {
                     Some(doc) => doc,
                     None => {
                         error!("Failed to convert statement model to LoroDoc for document '{}'", doc_uuid.to_string());
