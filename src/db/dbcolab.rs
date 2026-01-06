@@ -410,8 +410,8 @@ impl DbColab {
             .bind(snapshot)
             .bind(1) // version
             .bind(snapshot_size) // size
-            .bind("s/colab-doc") // created_by
-            .bind("s/colab-doc") // updated_by
+            .bind("s/colabri-doc") // created_by
+            .bind("s/colabri-doc") // updated_by
             .fetch_optional(&mut *tx)
             .await?;
 

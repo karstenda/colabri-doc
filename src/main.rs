@@ -77,7 +77,7 @@ async fn main() {
         if let Err(e) = clients::app_service_client::init_app_service_client(
             config.app_service_url(),
             secret.clone(),
-            config.cloud_service_name.clone(),
+            "colabri-doc".to_string(),
         ) {
             error!("Failed to initialize AppServiceClient: {}", e);
         } else {

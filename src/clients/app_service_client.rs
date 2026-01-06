@@ -2,6 +2,7 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::info;
@@ -74,7 +75,7 @@ impl AppServiceClient {
         )
     }
 
-    /// Example method to make a request to the app service
+    /// Call the /auth/prpls/{uid} endpoint to get PRPLs for a user
     pub async fn get_prpls(&self, uid: &str) -> Result<serde_json::Value, reqwest::Error> {
         let token = self.generate_token();
         let url = format!("{}/auth/prpls/{}", self.base_url, uid);
@@ -88,6 +89,30 @@ impl AppServiceClient {
         );
         self.client
             .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    // Call the /api/v1/{org_id}/documents/{doc_id}/sync endpoint
+    pub async fn sync_document(
+        &self, org_id: &str,
+        doc_id: &Uuid,
+    ) -> Result<serde_json::Value, reqwest::Error> {
+        let token = self.generate_token();
+        let url = format!("{}/api/v1/{}/documents/{}/sync", self.base_url, org_id, doc_id);
+        info!(
+            request_url = %url,
+            auth_header = %format!(
+                "Bearer {}",
+                Self::redact_token_preview(&token)
+            ),
+            "Dispatching document sync request to app service with Authorization header"
+        );
+        self.client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await?

@@ -375,7 +375,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
 
                 // Create the peer map with the current peer
                 let mut peer_map: HashMap<u64, String> = HashMap::new();
-                peer_map.insert(loro_doc.peer_id(), "s/colab-doc".to_string());
+                peer_map.insert(loro_doc.peer_id(), "s/colabri-doc".to_string());
 
                 // Put it in a ColabPackage
                 // Create the ColabPackage to store in the database
@@ -408,7 +408,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
 
                 // Create the peer map with the current peer
                 let mut peer_map: HashMap<u64, String> = HashMap::new();
-                peer_map.insert(loro_doc.peer_id(), "s/colab-doc".to_string());
+                peer_map.insert(loro_doc.peer_id(), "s/colabri-doc".to_string());
 
                 // Create DocContext
                 let context = DocContext {
@@ -561,6 +561,23 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
 
         // Clear the last updating peer in the context
         context.last_updating_peer = None;
+
+        // Call the app service sync endpoint to notify about the update
+        if let Some(client) = app_service_client::get_app_service_client() {
+            let client = client.clone();
+            let org_clone = org.clone();
+            let doc_uuid_clone = doc_uuid.clone();
+            tokio::spawn(async move {
+                match client.sync_document(&org_clone, &doc_uuid_clone).await {
+                    Ok(_) => {
+                        info!("Successfully notified app service about document update: {}", doc_uuid_clone);
+                    }
+                    Err(e) => {
+                        error!("Failed to notify app service about document update '{}': {}", doc_uuid_clone, e);
+                    }
+                }
+            });
+        }
 
         return Ok(());
     })
