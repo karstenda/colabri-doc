@@ -9,8 +9,8 @@ use std::future::Future;
 use serde_cbor;
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
-use crate::models::ColabPackage;
-use crate::{db::dbcolab::{self, DocumentStreamRow}, clients::app_service_client ,models::ColabStatementModel};
+use crate::models::{ColabModel, ColabPackage};
+use crate::{db::dbcolab::{self, DocumentStreamRow}, clients::app_service_client };
 use super::docctx::{DocContext};
 use super::userctx::{self};
 use super::connctx::{self, ConnCtx};
@@ -228,7 +228,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
         };
         
         // Load document from database
-        let doc_data = match db.load_statement_doc(&org_id, doc_uuid).await {
+        let doc_data = match db.load_colab_doc(&org_id, doc_uuid).await {
             Ok(Some(doc)) => doc,
             Ok(None) => {
                 info!("Document not found: {}", doc_uuid.to_string());
@@ -258,22 +258,23 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
         if main_stream_bytes.is_none() || main_stream.is_none() {
             if let Some(ref json_value) = doc_data.json {
                 // We need to generate the loro doc from the json in the statement.
-                // Parse the json as ColabStatementModel
-                let stmt_model: ColabStatementModel = match serde_json::from_value(json_value.clone()) {
+                
+                // Parse the json as ColabModel
+                let doc_model: ColabModel = match serde_json::from_value(json_value.clone()) {
                     Ok(model) => model,
                     Err(e) => {
-                        error!("Failed to parse statement JSON for document '{}': {}", doc_uuid.to_string(), e);
+                        error!("Failed to parse ColabModel JSON for document '{}': {}", doc_uuid.to_string(), e);
                         error!("JSON content: {}", serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| "Unable to serialize".to_string()));
                         return Err(format!("Failed to parse JSON: {}", e));
                     }
                 };
-                
-                // Convert the statement model to LoroDoc
-                let loro_doc = match crate::models::colabdoc::stmt_to_loro_doc(&stmt_model) {
+
+                // Convert ColabModel to LoroDoc
+                let loro_doc: LoroDoc = match crate::models::lorodoc::colab_to_loro_doc(&doc_model) {
                     Some(doc) => doc,
                     None => {
-                        error!("Failed to convert statement model to LoroDoc for document '{}'", doc_uuid.to_string());
-                        return Err("Failed to convert model to LoroDoc".to_string());
+                        error!("Failed to convert ColabModel to LoroDoc for document '{}'", doc_uuid.to_string());
+                        return Err("Failed to convert ColabModel to LoroDoc".to_string());
                     }
                 };
 
@@ -295,13 +296,13 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
                 let blob = match serde_cbor::to_vec(&colab_package) {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to serialize ColabPackage for document '{}': {}", doc_id, e);
+                        error!("Failed to serialize ColabPackage for document '{}': {}", doc_uuid.to_string(), e);
                         return Err(format!("Failed to serialize ColabPackage: {}", e));
                     }
                 };
 
                 // Store the generated snapshot as a new stream in the database
-                let docstream_id = match db.insert_statement_doc_stream(
+                let docstream_id = match db.insert_doc_stream(
                     &org_id,
                     doc_uuid,
                     blob
@@ -429,16 +430,7 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
                 error!("Failed to serialize ColabPackage for document '{}': {}", doc_id, e);
                 return Err(format!("Failed to serialize ColabPackage: {}", e));
             }
-        };
-
-        // Get database connection
-        let db = match dbcolab::get_db() {
-            Some(db) => db,
-            None => {
-                error!("Database not initialized, cannot save document: {}", doc_uuid);
-                return Err("Database not initialized".to_string());
-            }
-        };
+        };        
 
         // Convert snapshot to JSON for storage in statement
         let loro_doc = LoroDoc::new();
@@ -450,17 +442,46 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
         // Get the JSON representation
         let loro_value = loro_doc.get_deep_value();
         let json = loro_value.to_json_value();
+
+        // Figure out the type of ColabDocument
+        let doc_type: String = json.get("properties").and_then(|props| props.get("type")).and_then(|t| t.as_str()).map(|s| s.to_string()).ok_or_else(|| {
+            error!("Document '{}' is missing 'properties.type' field", doc_uuid);
+            "Document is missing 'properties.type' field".to_string()
+        })?;
         
-        // Save to database with incremented version
-        match db.update_statement(&org, doc_uuid, doc_stream_uuid, blob, json, &by_prpl).await {
-            Ok(_) => {
-                info!("Statement updated successfully {}", doc_uuid);
+        // Get database connection
+        let db = match dbcolab::get_db() {
+            Some(db) => db,
+            None => {
+                error!("Database not initialized, cannot save document: {}", doc_uuid);
+                return Err("Database not initialized".to_string());
             }
-            Err(e) => {
-                error!("Failed to update statement '{}': {}", doc_uuid, e);
-                return Err(format!("Failed to update statement '{}': {}", doc_uuid, e));
+        };
+
+        // Based on the document type, save it appropriately
+        match doc_type.as_str() {
+            "colab-statement" => {
+                // Save to database with incremented version
+                match db.update_colab_doc(&org, doc_uuid, &doc_type, doc_stream_uuid, blob, json, &by_prpl).await {
+                    Ok(_) => {
+                        info!("Statement updated successfully {}", doc_uuid);
+                    }
+                    Err(e) => {
+                        error!("Failed to update statement '{}': {}", doc_uuid, e);
+                        return Err(format!("Failed to update statement '{}': {}", doc_uuid, e));
+                    }
+                }
+            },
+            "colab-sheet" => {
+
+            },
+            other => {
+                error!("Unsupported document type '{}' for document '{}'", other, doc_uuid);
+                return Err(format!("Unsupported document type '{}'", other));
             }
         }
+
+        
 
         // Clear the last updating peer in the context
         context.last_updating_peer = None;

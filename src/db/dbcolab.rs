@@ -51,7 +51,7 @@ pub struct ViewableDocumentRow {
 
 /// Document with full metadata from the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatementDocument {
+pub struct ColabDocument {
     pub id: uuid::Uuid,
     pub name: String,
     pub doc_type: String,
@@ -221,19 +221,19 @@ impl DbColab {
         Ok(document)
     }
 
-    /// Load a statement document by ID with ACL authorization
+    /// Load a colab document by ID with ACL authorization
     ///
     /// # Arguments
     /// * `id` - Document UUID
     /// * `org` - Organization identifier
     ///
     /// # Returns
-    /// * `Result<Option<FullStatementDocument>, SqlxError>` - Document with metadata or None if not found/unauthorized
-    pub async fn load_statement_doc(
+    /// * `Result<Option<ColabDocument>, SqlxError>` - Document with metadata or None if not found/unauthorized
+    pub async fn load_colab_doc(
         &self,
         org: &str,
         document_id: uuid::Uuid,
-    ) -> Result<Option<StatementDocument>, SqlxError> {
+    ) -> Result<Option<ColabDocument>, SqlxError> {
         // Log pool stats before acquiring connection
         let pool_idle = self.pool.num_idle() as u32;
         let pool_size = self.pool.size();
@@ -273,7 +273,14 @@ impl DbColab {
                 d.updated_at,
                 d.created_by,
                 d.updated_by,
-                (SELECT st.json FROM document_statements st WHERE st.document = d.id LIMIT 1) as json,
+                CASE d.type
+                    WHEN 'colab-statement' THEN st.json
+                    WHEN 'colab-sheet' THEN sh.json
+                END AS colab_json,
+                CASE d.type
+                    WHEN 'colab-statement' THEN st.synced
+                    WHEN 'colab-sheet' THEN sh.synced
+                END AS colab_synced,
                 COALESCE(
                     (SELECT json_agg(da.*) FROM document_acl da WHERE da.document = d.id),
                     '[]'
@@ -298,11 +305,12 @@ impl DbColab {
                     ) FROM document_streams ds WHERE ds.document = d.id AND ds.deleted = FALSE),
                     '[]'
                 ) AS streams
-            FROM documents d 
+            FROM documents d
+                LEFT JOIN document_statements st ON d.id = st.document
+                LEFT JOIN document_sheets sh ON d.id = sh.document
             WHERE 
                 d.org = $1 
                 AND d.id = $2 
-                AND d.type = 'colab-statement'
                 AND d.deleted = FALSE;
         "#;
 
@@ -328,11 +336,11 @@ impl DbColab {
                     .map_err(|e| SqlxError::Decode(Box::new(e)))?;
 
                 // Use sqlx::types::Json wrapper for JSONB column
-                let json_wrapped: Option<Json<serde_json::Value>> = row.try_get("json")?;
+                let json_wrapped: Option<Json<serde_json::Value>> = row.try_get("colab_json")?;
                 let json = json_wrapped.map(|j| j.0);
 
-                // Create the StatementDocument
-                let doc = StatementDocument {
+                // Create the ColabDocument
+                let doc = ColabDocument {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
                     doc_type: row.try_get("type")?,
@@ -360,7 +368,7 @@ impl DbColab {
     ///
     /// # Returns
     /// * `Result<uuid::Uuid, SqlxError>` - Document ID
-    pub async fn insert_statement_doc_stream(
+    pub async fn insert_doc_stream(
         &self,
         org: &str,
         document_id: uuid::Uuid,
@@ -423,7 +431,7 @@ impl DbColab {
         Ok(returned_id)
     }
 
-    /// Update a statement document stream
+    /// Update a colab document
     ///
     /// # Arguments
     /// * `org` - ID of the organization
@@ -434,10 +442,11 @@ impl DbColab {
     ///
     /// # Returns
     /// * `Result<uuid::Uuid, SqlxError>` - Stream ID
-    pub async fn update_statement(
+    pub async fn update_colab_doc(
         &self,
         org: &str,
         doc_id: uuid::Uuid,
+        doc_type: &str,
         doc_stream_id: uuid::Uuid,
         colab_package_blob: Vec<u8>,
         json: serde_json::Value,
@@ -499,9 +508,19 @@ impl DbColab {
             .fetch_optional(&mut *tx)
             .await?;
 
-        // Execute the secondary query
-        let update_statement_query_sql = r#"
-        UPDATE document_statements
+        // Execute the document type specific update
+        let doc_table_name = match doc_type {
+            "colab-statement" => "document_statements",
+            "colab-sheet" => "document_sheets",
+            _ => {
+                error!("Unsupported document type for update: {}", doc_type);
+                return Err(SqlxError::RowNotFound);
+            }
+        };
+
+
+        let update_model_query_sql = format!(r#"
+        UPDATE {}
             SET json = $1,
                 synced = FALSE,
                 updated_at = NOW(),
@@ -509,8 +528,8 @@ impl DbColab {
             WHERE org = $3
                 AND document = $4
             RETURNING document;
-        "#;
-        let doc_stmt_row = sqlx::query(update_statement_query_sql)
+        "#, doc_table_name);
+        let doc_model_row = sqlx::query(&update_model_query_sql)
             .bind(json)
             .bind(by_prpl)
             .bind(org)
@@ -521,8 +540,8 @@ impl DbColab {
         // Commit the transaction
         tx.commit().await?;
 
-        match (doc_stream_row, doc_stmt_row) {
-            (Some(stream_row), Some(_stmt_row)) => {
+        match (doc_stream_row, doc_model_row) {
+            (Some(stream_row), Some(_model_row)) => {
                 let returned_id: uuid::Uuid = stream_row.try_get("id")?;
                 info!("Document Stream updated: {}", returned_id);
                 Ok(returned_id)
@@ -536,7 +555,7 @@ impl DbColab {
             }
             (_, None) => {
                 error!(
-                    "Document statement not found for update: org={}, doc={}",
+                    "Document model not found for update: org={}, doc={}",
                     org, doc_id
                 );
                 Err(SqlxError::RowNotFound)

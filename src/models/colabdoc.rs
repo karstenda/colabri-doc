@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use loro::{LoroDoc, LoroList, LoroMap, LoroText};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::option::Option;
@@ -52,10 +52,12 @@ impl fmt::Display for ColabModelPermission {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColabModel {
-    pub properties: ColabModelProperties,
+#[derive(Debug)]
+pub enum ColabModel {
+    Statement(ColabStatementModel),
+    Sheet(ColabSheetModel),
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColabModelProperties {
@@ -66,19 +68,51 @@ pub struct ColabModelProperties {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct _ColabSheetModel {
-    #[serde(flatten)]
-    pub colab_model: ColabModel,
+pub struct ColabSheetModel {
+    pub properties: ColabModelProperties,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub approvals: HashMap<String, ColabApproval>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    pub content: Vec<ColabSheetBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ColabSheetBlock {
+    #[serde(rename = "text")]
+    Text(ColabSheetTextBlock),
+    #[serde(rename = "statement-grid")]
+    StatementGrid(ColabSheetStatementGridBlock),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetTextBlock {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    #[serde(rename = "textElement")]
+    pub text_element: TextElement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetStatementGridBlock {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    pub rows: Vec<ColabSheetStatementGridRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetStatementGridRow {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(rename = "statementRef")]
+    pub statement_ref: String,
+    pub statement: ColabStatementModel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColabStatementModel {
-    #[serde(flatten)]
-    pub colab_model: ColabModel,
+    pub properties: ColabModelProperties,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
     pub content: HashMap<String, ColabStatementElement>,
@@ -179,7 +213,9 @@ pub struct ColabComment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextElement {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub children: Vec<TextElementChild>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub attributes: HashMap<String, String>,
     #[serde(rename = "nodeName")]
     pub node_name: String,
@@ -201,221 +237,6 @@ pub enum TextElementChildrenOrString {
     AsString(String),
 }
 
-pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
-    let loro_doc = LoroDoc::new();
-
-    // Let's create the properties map
-    let properties_loro_map = loro_doc.get_map("properties");
-
-    // Set the type
-    let _ = properties_loro_map.insert(
-        "type",
-        stmt_model
-            .colab_model
-            .properties
-            .r#type
-            .to_string()
-            .as_str(),
-    );
-    // Set the content type
-    let _ = properties_loro_map.insert(
-        "contentType",
-        stmt_model.colab_model.properties.content_type.as_str(),
-    );
-
-    // Set the ACLs (HashMap<ColabModelPermission, Vec<String>>)
-    let acls_loro_map = loro_doc.get_map("acls");
-    for (permission, principals) in &stmt_model.acls {
-        let permission_str = permission.to_string();
-        // Let's create a LoroList
-        let perm_loro_list = acls_loro_map
-            .get_or_create_container(&permission_str, LoroList::new())
-            .unwrap();
-        // Add the principals
-        for (idx, principal) in principals.iter().enumerate() {
-            let _ = perm_loro_list.insert(idx, principal.as_str());
-        }
-    }
-
-    // Set the content (HashMap<String, ColabStatementElement>)
-    let content_loro_map = loro_doc.get_map("content");
-    for (block_id, block) in &stmt_model.content {
-        // Let's create a LoroMap for every block
-        let block_loro_map = content_loro_map
-            .get_or_create_container(block_id, LoroMap::new())
-            .unwrap();
-
-        // Set the ACLs for this Statement element (HashMap<ColabModelPermission, Vec<String>>)
-        let block_acls_loro_map = block_loro_map
-            .get_or_create_container("acls", LoroMap::new())
-            .unwrap();
-        for (permission, principals) in &block.acls {
-            let permission_str = permission.to_string();
-            // Let's create a LoroList
-            let block_perm_loro_list = block_acls_loro_map
-                .get_or_create_container(&permission_str, LoroList::new())
-                .unwrap();
-            // Add the principals
-            for (idx, principal) in principals.iter().enumerate() {
-                let _ = block_perm_loro_list.insert(idx, principal.as_str());
-            }
-        }
-
-        if !block.approvals.is_empty() {
-            // Mirror the approval workflow state so clients stay consistent in CRDT form.
-            let approvals_loro_map = block_loro_map
-                .get_or_create_container("approvals", LoroMap::new())
-                .unwrap();
-            for (approval_id, approval) in &block.approvals {
-                let approval_loro_map = approvals_loro_map
-                    .get_or_create_container(approval_id.as_str(), LoroMap::new())
-                    .unwrap();
-                colab_user_approval_to_loro_map(approval, &approval_loro_map);
-            }
-        }
-
-        // Let's ignore comments for now.
-
-        // Let's set the TextElement
-        let text_element_loro_map = block_loro_map
-            .get_or_create_container("textElement", LoroMap::new())
-            .unwrap();
-        txtelem_to_loro_doc(&block.text_element, &text_element_loro_map);
-    }
-
-    // We should be done for now
-    Some(loro_doc)
-}
-
-#[allow(dead_code)]
-fn colab_approval_to_loro_map(approval: &ColabApproval, loro_map: &LoroMap) {
-    match approval {
-        ColabApproval::User(user_approval) => {
-            let _ = loro_map.insert("type", "user");
-            colab_user_approval_to_loro_map(user_approval, loro_map);
-        }
-        ColabApproval::Group(group_approval) => {
-            let _ = loro_map.insert("type", "group");
-            let state_str = group_approval.state.to_string();
-            let _ = loro_map.insert("state", state_str.as_str());
-
-            let group_str = group_approval.group.to_string();
-            let _ = loro_map.insert("group", group_str.as_str());
-
-            if !group_approval.approvals.is_empty() {
-                let nested_list = loro_map
-                    .get_or_create_container("approvals", LoroList::new())
-                    .unwrap();
-                for (idx, nested_approval) in group_approval.approvals.iter().enumerate() {
-                    let nested_map = LoroMap::new();
-                    colab_user_approval_to_loro_map(nested_approval, &nested_map);
-                    let _ = nested_list.insert_container(idx, nested_map);
-                }
-            }
-        }
-    }
-}
-
-fn colab_user_approval_to_loro_map(user_approval: &ColabUserApproval, loro_map: &LoroMap) {
-    let state_str = user_approval.state.to_string();
-    let _ = loro_map.insert("state", state_str.as_str());
-
-    let user_str = user_approval.user.to_string();
-    let _ = loro_map.insert("user", user_str.as_str());
-
-    let date_str = user_approval.date.to_rfc3339();
-    let _ = loro_map.insert("date", date_str.as_str());
-}
-
-fn txtelem_to_loro_doc(text_element: &TextElement, loro_map: &LoroMap) {
-    const MAX_DEPTH: usize = 100; // Prevent stack overflow
-
-    // Set the nodeName
-    let _ = loro_map.insert("nodeName", text_element.node_name.as_str());
-
-    // Set the attributes
-    let attributes_loro_map = loro_map
-        .get_or_create_container("attributes", LoroMap::new())
-        .unwrap();
-    for (key, value) in &text_element.attributes {
-        let _ = attributes_loro_map.insert(key, value.as_str());
-    }
-
-    // Set the children
-    let children_loro_list = loro_map
-        .get_or_create_container("children", LoroList::new())
-        .unwrap();
-    for (idx, child) in text_element.children.iter().enumerate() {
-        let child_loro_map = LoroMap::new();
-        txtelem_child_to_loro_map(child, &child_loro_map, 0, MAX_DEPTH);
-        let _ = children_loro_list.insert_container(idx, child_loro_map);
-    }
-}
-
-fn txtelem_child_to_loro_map(
-    child: &TextElementChild,
-    loro_map: &LoroMap,
-    depth: usize,
-    max_depth: usize,
-) {
-    // Prevent stack overflow by limiting recursion depth
-    if depth >= max_depth {
-        let _ = loro_map.insert("nodeName", "truncated");
-        let _ = loro_map.insert("children", "[Max depth exceeded]");
-        return;
-    }
-
-    // Set the nodeName
-    let _ = loro_map.insert("nodeName", child.node_name.as_str());
-
-    // Set the attributes
-    let attributes_loro_map = loro_map
-        .get_or_create_container("attributes", LoroMap::new())
-        .unwrap();
-    for (key, value) in &child.attributes {
-        let _ = attributes_loro_map.insert(key, value.as_str());
-    }
-
-    // Set the children
-    match &child.children {
-        TextElementChildrenOrString::AsChildren(children_vec) => {
-            let children_loro_list = loro_map
-                .get_or_create_container("children", LoroList::new())
-                .unwrap();
-            for (idx, nested_child) in children_vec.iter().enumerate() {
-                let nested_child_loro_map = LoroMap::new();
-                txtelem_child_to_loro_map(
-                    nested_child,
-                    &nested_child_loro_map,
-                    depth + 1,
-                    max_depth,
-                );
-                let _ = children_loro_list.insert_container(idx, nested_child_loro_map);
-            }
-        }
-        TextElementChildrenOrString::AsStringArray(strings) => {
-            let children_loro_list = loro_map
-                .get_or_create_container("children", LoroList::new())
-                .unwrap();
-            for (idx, s) in strings.iter().enumerate() {
-                let loro_text = children_loro_list
-                    .insert_container(idx, LoroText::new())
-                    .unwrap();
-                let _ = loro_text.insert(0, s.as_str());
-            }
-        }
-        TextElementChildrenOrString::AsString(s) => {
-            let children_loro_list = loro_map
-                .get_or_create_container("children", LoroList::new())
-                .unwrap();
-            let loro_text = children_loro_list
-                .insert_container(0, LoroText::new())
-                .unwrap();
-            let _ = loro_text.insert(0, s.as_str());
-        }
-    }
-}
-
 // Helper function to deserialize null as default value
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -424,4 +245,32 @@ where
 {
     let opt = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
+}
+
+impl<'de> Deserialize<'de> for ColabModel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let doc_type = value
+            .get("properties")
+            .and_then(|props| props.get("type"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| de::Error::missing_field("properties.type"))?;
+
+        match doc_type {
+            "colab-statement" => {
+                let stmt = ColabStatementModel::deserialize(value)
+                    .map_err(de::Error::custom)?;
+                Ok(ColabModel::Statement(stmt))
+            }
+            "colab-sheet" => {
+                let sheet = ColabSheetModel::deserialize(value)
+                    .map_err(de::Error::custom)?;
+                Ok(ColabModel::Sheet(sheet))
+            }
+            other => Err(de::Error::unknown_variant(other, &["colab-statement", "colab-sheet"])),
+        }
+    }
 }
