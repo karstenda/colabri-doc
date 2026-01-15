@@ -65,6 +65,16 @@ pub struct ColabModelProperties {
     pub r#type: ColabModelType,
     #[serde(rename = "contentType")]
     pub content_type: String,
+    #[serde(
+        rename = "countryCodes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub country_codes: Option<Vec<String>>,
+    #[serde(
+        rename = "langCodes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lang_codes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +102,8 @@ pub struct ColabSheetTextBlock {
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
     #[serde(rename = "textElement")]
     pub text_element: TextElement,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub approvals: HashMap<String, ColabApproval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,9 +117,10 @@ pub struct ColabSheetStatementGridBlock {
 pub struct ColabSheetStatementGridRow {
     #[serde(rename = "type")]
     pub r#type: String,
-    #[serde(rename = "statementRef")]
-    pub statement_ref: String,
-    pub statement: ColabStatementModel,
+    #[serde(rename = "statementRef", skip_serializing_if = "Option::is_none", )]
+    pub statement_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statement: Option<ColabStatementModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +237,7 @@ pub struct TextElement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextElementChild {
     pub children: TextElementChildrenOrString,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub attributes: HashMap<String, String>,
     #[serde(rename = "nodeName")]
     pub node_name: String,

@@ -141,6 +141,19 @@ pub fn stmt_to_loro_doc(stmt_model: &ColabStatementModel) -> Option<LoroDoc> {
             .get_or_create_container("textElement", LoroMap::new())
             .unwrap();
         txtelem_to_loro_doc(&block.text_element, &text_element_loro_map);
+
+        // Let's set the approvals
+        if !block.approvals.is_empty() {
+            let approvals_loro_map = block_loro_map
+                .get_or_create_container("approvals", LoroMap::new())
+                .unwrap();
+            for (approval_id, approval) in &block.approvals {
+                let approval_loro_map = approvals_loro_map
+                    .get_or_create_container(approval_id.as_str(), LoroMap::new())
+                    .unwrap();
+                colab_user_approval_to_loro_map(approval, &approval_loro_map);
+            }
+        }
     }
 
     // We should be done for now
@@ -309,10 +322,16 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
             for (idx, row) in grid_block.rows.iter().enumerate() {
                 let row_map = LoroMap::new();
                 let _ = row_map.insert("type", row.r#type.as_str());
-                let _ = row_map.insert("statementRef", row.statement_ref.as_str());
-                
-                let statement_map = row_map.insert_container("statement", LoroMap::new()).unwrap();
-                stmt_to_loro_map(&row.statement, &statement_map);
+                if let Some(s) = &row.statement_ref {
+                    let _ = row_map.insert("statementRef", s.as_str());
+                }
+
+                if let Some(stmt) = &row.statement {
+                    let statement_map = row_map
+                        .insert_container("statement", LoroMap::new())
+                        .unwrap();
+                    stmt_to_loro_map(stmt, &statement_map);
+                }
 
                 let _ = rows_list.insert_container(idx, row_map);
             }
@@ -326,6 +345,39 @@ fn stmt_to_loro_map(stmt_model: &ColabStatementModel, loro_map: &LoroMap) {
     let properties_map = loro_map.insert_container("properties", LoroMap::new()).unwrap();
     let _ = properties_map.insert("type", stmt_model.properties.r#type.to_string().as_str());
     let _ = properties_map.insert("contentType", stmt_model.properties.content_type.as_str());
+    // Set countryCodes if present
+    if stmt_model.properties.country_codes.is_some() {
+        let country_codes_list = properties_map
+            .get_or_create_container("countryCodes", LoroList::new())
+            .unwrap();
+        for (idx, code) in stmt_model
+            .properties
+            .country_codes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let _ = country_codes_list.insert(idx, code.as_str());
+        }
+    }
+
+    // Set langCodes if present
+    if stmt_model.properties.lang_codes.is_some() {
+        let lang_codes_list = properties_map
+            .get_or_create_container("langCodes", LoroList::new())
+            .unwrap();
+        for (idx, code) in stmt_model
+            .properties
+            .lang_codes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let _ = lang_codes_list.insert(idx, code.as_str());
+        }
+    }
 
     // ACLs
     let acls_map = loro_map.insert_container("acls", LoroMap::new()).unwrap();
@@ -346,7 +398,7 @@ fn stmt_to_loro_map(stmt_model: &ColabStatementModel, loro_map: &LoroMap) {
 
         // Approvals
         if !block.approvals.is_empty() {
-             let approvals_loro_map = block_loro_map
+            let approvals_loro_map = block_loro_map
                 .get_or_create_container("approvals", LoroMap::new())
                 .unwrap();
             for (approval_id, approval) in &block.approvals {
