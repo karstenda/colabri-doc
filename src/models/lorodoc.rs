@@ -1,5 +1,7 @@
 use loro::{LoroDoc, LoroList, LoroMap, LoroText};
 use std::option::Option;
+use tracing::{info};
+
 
 use crate::models::{
     ColabApproval, ColabModel, ColabModelPermission, ColabSheetBlock, ColabSheetModel,
@@ -34,6 +36,42 @@ pub fn sheet_to_loro_doc(sheet_model: &ColabSheetModel) -> Option<LoroDoc> {
         "contentType",
         sheet_model.properties.content_type.as_str(),
     );
+
+    // Set countryCodes if present
+    info!("Setting countryCodes if present");
+    if sheet_model.properties.country_codes.is_some() {
+        info!("CountryCodes are present");
+        let country_codes_list = properties_loro_map
+            .get_or_create_container("countryCodes", LoroList::new())
+            .unwrap();
+        for (idx, code) in sheet_model
+            .properties
+            .country_codes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let _ = country_codes_list.insert(idx, code.as_str());
+        }
+    }
+
+    // Set langCodes if present
+    if sheet_model.properties.lang_codes.is_some() {
+        let lang_codes_list = properties_loro_map
+            .get_or_create_container("langCodes", LoroList::new())
+            .unwrap();
+        for (idx, code) in sheet_model
+            .properties
+            .lang_codes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let _ = lang_codes_list.insert(idx, code.as_str());
+        }
+    }
 
     // Set the ACLs (HashMap<ColabModelPermission, Vec<String>>)
     let acls_loro_map = loro_doc.get_map("acls");
@@ -345,39 +383,6 @@ fn stmt_to_loro_map(stmt_model: &ColabStatementModel, loro_map: &LoroMap) {
     let properties_map = loro_map.insert_container("properties", LoroMap::new()).unwrap();
     let _ = properties_map.insert("type", stmt_model.properties.r#type.to_string().as_str());
     let _ = properties_map.insert("contentType", stmt_model.properties.content_type.as_str());
-    // Set countryCodes if present
-    if stmt_model.properties.country_codes.is_some() {
-        let country_codes_list = properties_map
-            .get_or_create_container("countryCodes", LoroList::new())
-            .unwrap();
-        for (idx, code) in stmt_model
-            .properties
-            .country_codes
-            .as_ref()
-            .unwrap()
-            .iter()
-            .enumerate()
-        {
-            let _ = country_codes_list.insert(idx, code.as_str());
-        }
-    }
-
-    // Set langCodes if present
-    if stmt_model.properties.lang_codes.is_some() {
-        let lang_codes_list = properties_map
-            .get_or_create_container("langCodes", LoroList::new())
-            .unwrap();
-        for (idx, code) in stmt_model
-            .properties
-            .lang_codes
-            .as_ref()
-            .unwrap()
-            .iter()
-            .enumerate()
-        {
-            let _ = lang_codes_list.insert(idx, code.as_str());
-        }
-    }
 
     // ACLs
     let acls_map = loro_map.insert_container("acls", LoroMap::new()).unwrap();

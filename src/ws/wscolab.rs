@@ -458,30 +458,16 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
             }
         };
 
-        // Based on the document type, save it appropriately
-        match doc_type.as_str() {
-            "colab-statement" => {
-                // Save to database with incremented version
-                match db.update_colab_doc(&org, doc_uuid, &doc_type, doc_stream_uuid, blob, json, &by_prpl).await {
-                    Ok(_) => {
-                        info!("Statement updated successfully {}", doc_uuid);
-                    }
-                    Err(e) => {
-                        error!("Failed to update statement '{}': {}", doc_uuid, e);
-                        return Err(format!("Failed to update statement '{}': {}", doc_uuid, e));
-                    }
-                }
-            },
-            "colab-sheet" => {
-
-            },
-            other => {
-                error!("Unsupported document type '{}' for document '{}'", other, doc_uuid);
-                return Err(format!("Unsupported document type '{}'", other));
+        // Save to database with incremented version
+        match db.update_colab_doc(&org, doc_uuid, &doc_type, doc_stream_uuid, blob, json, &by_prpl).await {
+            Ok(_) => {
+                info!("Statement updated successfully {}", doc_uuid);
             }
-        }
-
-        
+            Err(e) => {
+                error!("Failed to update statement '{}': {}", doc_uuid, e);
+                return Err(format!("Failed to update statement '{}': {}", doc_uuid, e));
+            }
+        };        
 
         // Clear the last updating peer in the context
         context.last_updating_peer = None;
