@@ -1,4 +1,4 @@
-use loro::{LoroDoc, LoroList, LoroMap, LoroText};
+use loro::{LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText};
 use std::option::Option;
 use tracing::{info};
 
@@ -36,6 +36,19 @@ pub fn sheet_to_loro_doc(sheet_model: &ColabSheetModel) -> Option<LoroDoc> {
         "contentType",
         sheet_model.properties.content_type.as_str(),
     );
+
+    // Set the masterLangCode if present
+    if sheet_model.properties.master_lang_code.is_some() {
+        let _ = properties_loro_map.insert(
+            "masterLangCode",
+            sheet_model
+                .properties
+                .master_lang_code
+                .as_ref()
+                .unwrap()
+                .as_str(),
+        );
+    }
 
     // Set countryCodes if present
     info!("Setting countryCodes if present");
@@ -88,7 +101,7 @@ pub fn sheet_to_loro_doc(sheet_model: &ColabSheetModel) -> Option<LoroDoc> {
     }
 
     // Set the content in the LoroDoc from the list of content
-    let content_loro_list = loro_doc.get_list("content");
+    let content_loro_list = loro_doc.get_movable_list("content");
     for (idx, block) in sheet_model.content.iter().enumerate() {
         // Let's create a LoroMap for every block
         let block_loro_map = colab_sheet_block_to_loro_map(block);
@@ -253,13 +266,33 @@ fn txtelem_to_loro_doc(text_element: &TextElement, loro_map: &LoroMap) {
     }
 
     // Set the children
-    let children_loro_list = loro_map
-        .get_or_create_container("children", LoroList::new())
-        .unwrap();
-    for (idx, child) in text_element.children.iter().enumerate() {
-        let child_loro_map = LoroMap::new();
-        txtelem_child_to_loro_map(child, &child_loro_map, 0, MAX_DEPTH);
-        let _ = children_loro_list.insert_container(idx, child_loro_map);
+    match &text_element.children {
+        TextElementChildrenOrString::AsChildren(children_vec) => {
+            let children_loro_list = loro_map
+                .get_or_create_container("children", LoroList::new())
+                .unwrap();
+            for (idx, nested_child) in children_vec.iter().enumerate() {
+                let nested_child_loro_map = LoroMap::new();
+                txtelem_child_to_loro_map(
+                    nested_child,
+                    &nested_child_loro_map,
+                    1,
+                    MAX_DEPTH,
+                );
+                let _ = children_loro_list.insert_container(idx, nested_child_loro_map);
+            }
+        }
+        TextElementChildrenOrString::AsStringArray(strings) => {
+            let children_loro_list = loro_map
+                .get_or_create_container("children", LoroList::new())
+                .unwrap();
+            for (idx, s) in strings.iter().enumerate() {
+                let loro_text = children_loro_list
+                    .insert_container(idx, LoroText::new())
+                    .unwrap();
+                let _ = loro_text.insert(0, s.as_str());
+            }
+        }
     }
 }
 
@@ -315,15 +348,6 @@ fn txtelem_child_to_loro_map(
                 let _ = loro_text.insert(0, s.as_str());
             }
         }
-        TextElementChildrenOrString::AsString(s) => {
-            let children_loro_list = loro_map
-                .get_or_create_container("children", LoroList::new())
-                .unwrap();
-            let loro_text = children_loro_list
-                .insert_container(0, LoroText::new())
-                .unwrap();
-            let _ = loro_text.insert(0, s.as_str());
-        }
     }
 }
 
@@ -337,6 +361,12 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
                 .insert_container("acls", LoroMap::new())
                 .unwrap();
             populate_acls(&acls_map, &text_block.acls);
+
+            // Title
+            let title_element_map = loro_map
+                .insert_container("title", LoroMap::new())
+                .unwrap();
+            txtelem_to_loro_doc(&text_block.title, &title_element_map);
             
             // TextElement
             let text_element_map = loro_map
@@ -352,9 +382,15 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
                 .unwrap();
             populate_acls(&acls_map, &grid_block.acls);
 
+            // Title
+            let title_element_map = loro_map
+                .insert_container("title", LoroMap::new())
+                .unwrap();
+            txtelem_to_loro_doc(&grid_block.title, &title_element_map);
+
             // Rows
             let rows_list = loro_map
-                .insert_container("rows", LoroList::new())
+                .insert_container("rows", LoroMovableList::new())
                 .unwrap();
             
             for (idx, row) in grid_block.rows.iter().enumerate() {

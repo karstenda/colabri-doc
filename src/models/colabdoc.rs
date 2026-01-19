@@ -65,6 +65,8 @@ pub struct ColabModelProperties {
     pub r#type: ColabModelType,
     #[serde(rename = "contentType")]
     pub content_type: String,
+    #[serde(rename = "masterLangCode", skip_serializing_if = "Option::is_none")]
+    pub master_lang_code: Option<String>,
     #[serde(
         rename = "countryCodes",
         skip_serializing_if = "Option::is_none"
@@ -100,7 +102,8 @@ pub enum ColabSheetBlock {
 pub struct ColabSheetTextBlock {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
-    #[serde(rename = "textElement")]
+    pub title: TextElement,
+    #[serde(rename = "textElement",)]
     pub text_element: TextElement,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub approvals: HashMap<String, ColabApproval>,
@@ -110,6 +113,7 @@ pub struct ColabSheetTextBlock {
 pub struct ColabSheetStatementGridBlock {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    pub title: TextElement,
     pub rows: Vec<ColabSheetStatementGridRow>,
 }
 
@@ -226,8 +230,7 @@ pub struct ColabComment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextElement {
-    #[serde(default, deserialize_with = "deserialize_null_default")]
-    pub children: Vec<TextElementChild>,
+    pub children: TextElementChildrenOrString,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub attributes: HashMap<String, String>,
     #[serde(rename = "nodeName")]
@@ -247,8 +250,7 @@ pub struct TextElementChild {
 #[serde(untagged)]
 pub enum TextElementChildrenOrString {
     AsChildren(Vec<TextElementChild>),
-    AsStringArray(Vec<String>),
-    AsString(String),
+    AsStringArray(Vec<String>)
 }
 
 // Helper function to deserialize null as default value
@@ -257,7 +259,7 @@ where
     D: Deserializer<'de>,
     T: Default + Deserialize<'de>,
 {
-    let opt = Option::deserialize(deserializer)?;
+    let opt: Option<T> = Option::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
 }
 
