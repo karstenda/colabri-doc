@@ -2,6 +2,7 @@ mod docs;
 mod handlers;
 mod models;
 mod routes;
+mod auth;
 // mod websocket; // No longer needed - using loro-websocket-server directly
 mod clients;
 mod config;
@@ -11,9 +12,9 @@ mod ws;
 use axum::Router;
 use config::Config;
 use docs::ApiDoc;
-use loro_websocket_server::ServerConfig;
+use loro_websocket_server::{HubRegistry, ServerConfig};
 use routes::create_api_routes;
-use std::panic;
+use std::{panic, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -87,20 +88,6 @@ async fn main() {
         warn!("cloud_auth_jwt_secret not configured - AppServiceClient not initialized");
     }
 
-    // Create API routes
-    let api_routes = create_api_routes();
-
-    // Combine all routes
-    let app_routes = Router::new()
-        .route("/health", axum::routing::get(handlers::health_check))
-        .route("/ready", axum::routing::get(handlers::ready_check))
-        // Mount API routes
-        .nest("/api", api_routes)
-        // Mount Swagger UI
-        .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        // Add tracing layer
-        .layer(TraceLayer::new_for_http());
-
     // Configure loro-websocket-server
     let ws_port = config.websocket_port();
     let ws_addr = format!("{}:{}", config.host, ws_port);
@@ -115,6 +102,7 @@ async fn main() {
         on_update: Some(std::sync::Arc::new(ws::wscolab::on_update)),
         ..Default::default()
     };
+    let registry = Arc::new(HubRegistry::new(ws_config));
 
     // Start WebSocket server
     let ws_listener = tokio::net::TcpListener::bind(&ws_addr)
@@ -123,10 +111,26 @@ async fn main() {
 
     info!("📡 WebSocket server starting on ws://{}", ws_addr);
 
+    // Create API routes
+    let api_routes = create_api_routes(registry.clone());
+
+    // Combine all routes
+    let app_routes = Router::new()
+        .route("/health", axum::routing::get(handlers::health_check))
+        .route("/ready", axum::routing::get(handlers::ready_check))
+        // Mount API routes
+        .nest("/api", api_routes)
+        // Mount Swagger UI
+        .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        // Add tracing layer
+        .layer(TraceLayer::new_for_http());
+
+    
+
     // Spawn WebSocket server task
     tokio::spawn(async move {
         if let Err(e) =
-            loro_websocket_server::serve_incoming_with_config(ws_listener, ws_config).await
+            loro_websocket_server::serve_incoming_with_registry(ws_listener, registry.clone()).await
         {
             error!("WebSocket server error: {}", e);
         }

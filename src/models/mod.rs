@@ -1,8 +1,12 @@
 pub mod colabdoc;
 pub mod health;
-pub mod item;
+pub mod ready;
+pub mod doc_export;
 pub mod lorodoc;
+pub mod error;
 
 pub use colabdoc::*;
 pub use health::*;
-pub use item::*;
+pub use ready::*;
+pub use doc_export::*;
+pub use error::*;

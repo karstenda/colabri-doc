@@ -1831,7 +1831,7 @@ dependencies = [
 [[package]]
 name = "loro-protocol"
 version = "0.1.0"
-source = "git+https://github.com/karstenda/loro-protocol.git?rev=519d850651d7a02b1b703f3de1bbfd3fb0360db5#519d850651d7a02b1b703f3de1bbfd3fb0360db5"
+source = "git+https://github.com/karstenda/loro-protocol.git?rev=36e496660f22023efcb5765723f196e1d3752d9a#36e496660f22023efcb5765723f196e1d3752d9a"
 
 [[package]]
 name = "loro-rle"
@@ -1853,7 +1853,7 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 [[package]]
 name = "loro-websocket-server"
 version = "0.1.0"
-source = "git+https://github.com/karstenda/loro-protocol.git?rev=519d850651d7a02b1b703f3de1bbfd3fb0360db5#519d850651d7a02b1b703f3de1bbfd3fb0360db5"
+source = "git+https://github.com/karstenda/loro-protocol.git?rev=36e496660f22023efcb5765723f196e1d3752d9a#36e496660f22023efcb5765723f196e1d3752d9a"
 dependencies = [
  "cookie",
  "futures-util",

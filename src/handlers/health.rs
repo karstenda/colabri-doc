@@ -1,4 +1,4 @@
-use crate::models::HealthResponse;
+use crate::models::{HealthResponse, ReadyResponse};
 use axum::Json;
 use tracing::debug;
 
@@ -12,11 +12,11 @@ pub async fn health_check() -> Json<HealthResponse> {
 }
 
 /// Readiness check endpoint
-pub async fn ready_check() -> Json<HealthResponse> {
+pub async fn ready_check() -> Json<ReadyResponse> {
     debug!("Readiness check requested");
     // In a real application, you might check database connectivity,
     // cache availability, or other dependencies here.
-    Json(HealthResponse {
+    Json(ReadyResponse {
         status: "ok".to_string(),
         message: "Service is ready".to_string(),
     })

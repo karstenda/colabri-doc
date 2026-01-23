@@ -7,7 +7,7 @@ use uuid::Uuid;
 use std::{collections::HashMap, pin::Pin};
 use std::future::Future;
 use serde_cbor;
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use crate::routes::auth_middleware::validate_jwt;
 
 use crate::models::{ColabModel, ColabPackage};
 use crate::{db::dbcolab::{self, DocumentStreamRow}, clients::app_service_client };
@@ -59,13 +59,7 @@ pub fn on_auth_handshake(args: HandshakeAuthArgs) -> bool {
     let config = crate::config::get_config();
 
     if let Some(secret) = &config.cloud_auth_jwt_secret {
-        let validation = Validation::new(Algorithm::HS256);
-        
-        match decode::<serde_json::Value>(
-            token,
-            &DecodingKey::from_secret(secret.as_bytes()),
-            &validation
-        ) {
+        match validate_jwt(token, secret) {
             Ok(token_data) => {
                 if let Some(uid) = token_data.claims.get("sub").and_then(|v| v.as_str()) {
                     info!("JWT token validated successfully for user: {}", uid);
@@ -543,53 +537,65 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         };
 
         // Figure out which user is behind this connection
+        let is_system_update = conn_id == 0;
         let conn_ctx_cache = connctx::get_conn_ctx_cache();
-        let conn_ctx = match conn_ctx_cache.get(&conn_id) {
-            Some(ctx) => ctx,
-            None => {
-                error!("No connection context found for connection_id: {}", conn_id);
-                return UpdatedDoc {
-                    status: UpdateStatusCode::PermissionDenied,
-                    ctx: Some(doc_ctx),
-                    doc: None,
-                };
-            }
-        };
-        let uid = conn_ctx.uid.clone();
-        let conn_org = conn_ctx.org_id.clone();
-        info!("Received update from user: {} on doc: {}", uid, room_id);
-
-        let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid).await {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                error!("Unable to load user context for uid {}: {}", uid, e);
-                return UpdatedDoc {
-                    status: UpdateStatusCode::PermissionDenied,
-                    ctx: Some(doc_ctx),
-                    doc: None,
-                };
-            }
-        };
-        if !user_has_org_access(&user_ctx.principals, &conn_org) {
-            error!("User {} does not have access to organization {}", uid, conn_org);
-            return UpdatedDoc {
-                status: UpdateStatusCode::PermissionDenied,
-                ctx: Some(doc_ctx),
-                doc: None,
+        let by_prpl: String;
+        let user_uid: Option<String>;
+        let user_prpls: Vec<String>;
+        if !is_system_update {
+            let conn_ctx= match conn_ctx_cache.get(&conn_id) {
+                Some(ctx) => ctx,
+                None => {
+                    error!("No connection context found for connection_id: {}", conn_id);
+                    return UpdatedDoc {
+                        status: UpdateStatusCode::PermissionDenied,
+                        ctx: Some(doc_ctx),
+                        doc: None,
+                    };
+                }
             };
-        }
-        let user_prpls = &user_ctx.principals;
-        let by_prpl = match user_ctx.get_user_principal(&org_id) {
-            Some(prpl) => prpl,
-            None => {
-                error!("No principal found for user {} in organization {}", uid, org_id);
+            let uid: String = conn_ctx.uid.clone();
+            let conn_org = conn_ctx.org_id.clone();
+            info!("Received update from user: {} on doc: {}", uid, room_id);
+
+            let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    error!("Unable to load user context for uid {}: {}", uid, e);
+                    return UpdatedDoc {
+                        status: UpdateStatusCode::PermissionDenied,
+                        ctx: Some(doc_ctx),
+                        doc: None,
+                    };
+                }
+            };
+            if !user_has_org_access(&user_ctx.principals, &conn_org) {
+                error!("User {} does not have access to organization {}", uid, conn_org);
                 return UpdatedDoc {
                     status: UpdateStatusCode::PermissionDenied,
                     ctx: Some(doc_ctx),
                     doc: None,
                 };
             }
-        };
+            user_prpls = user_ctx.principals.clone();
+            user_uid = Some(uid.clone());
+            by_prpl = match user_ctx.get_user_principal(&org_id) {
+                Some(prpl) => prpl,
+                None => {
+                    error!("No principal found for user {} in organization {}", uid, org_id);
+                    return UpdatedDoc {
+                        status: UpdateStatusCode::PermissionDenied,
+                        ctx: Some(doc_ctx),
+                        doc: None,
+                    };
+                }
+            };
+        } else {
+            info!("Received update from system");
+            by_prpl = "s/colabri-system".to_string();
+            user_prpls = vec!["s/colabri-system".to_string()];
+            user_uid = None;
+        }    
 
         // Ensure we have a loro document
         let loro_doc = match args.doc {
@@ -650,7 +656,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
             }
             None => {
                 // No principal found for this peer, that's fine just add it.
-                info!("Adding new peer {} for user {} in document {}", updating_peer_id, uid, room_id);
+                info!("Adding new peer {} for prpl {} in document {}", updating_peer_id, by_prpl, room_id);
                 peer_map.insert(updating_peer_id, by_prpl.clone());
                 true
             },
@@ -658,7 +664,11 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
 
         // If the peer was not ok, reject the update
         if !ok_peer {
-            error!("User {} attempted to update document {} with invalid peer {}", uid, room_id, updating_peer_id);
+            if let Some(uid) = user_uid {
+                error!("User {} attempted to update document {} with invalid peer {}", uid, room_id, updating_peer_id);
+            } else {
+                error!("System attempted to update document {} with invalid peer {}", room_id, updating_peer_id);
+            }
             return UpdatedDoc {
                 status: UpdateStatusCode::PermissionDenied,
                 ctx: Some(doc_ctx),
@@ -667,7 +677,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         }
 
         // Update the last updating peer in the document context
-        info!("User {} updated document {} with peer {}", uid, room_id, updating_peer_id);
+        info!("Prpl {} updated document {} with peer {}", by_prpl, room_id, updating_peer_id);
         doc_ctx.last_updating_peer = Some(updating_peer_id);
 
         // Return OK
