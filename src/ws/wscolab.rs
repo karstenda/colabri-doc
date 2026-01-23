@@ -439,9 +439,24 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
             return Err(format!("Failed to import snapshot for document '{}': {}", doc_uuid, e));
         }
 
-        // Get the JSON representation
+        // Get the JSON representations
         let loro_value = loro_doc.get_deep_value();
         let json = loro_value.to_json_value();
+        let state_vv = loro_doc.state_vv();
+        let state_vv_json = match serde_json::to_value(&state_vv) {
+            Ok(val) => val,
+            Err(e) => {
+                error!("Failed to serialize state_vv for document '{}': {}", doc_uuid, e);
+                return Err(format!("Failed to serialize state_vv: {}", e));
+            }
+        };
+        let peer_map_json = match serde_json::to_value(&context.peer_map.clone()) {
+            Ok(val) => val,
+            Err(e) => {
+                error!("Failed to serialize peer_map for document '{}': {}", doc_uuid, e);
+                return Err(format!("Failed to serialize peer_map: {}", e));
+            }
+        };
 
         // Figure out the type of ColabDocument
         let doc_type: String = json.get("properties").and_then(|props| props.get("type")).and_then(|t| t.as_str()).map(|s| s.to_string()).ok_or_else(|| {
@@ -459,7 +474,7 @@ pub fn on_save_document(args: SaveDocArgs<DocContext>) -> Pin<Box<dyn Future<Out
         };
 
         // Save to database with incremented version
-        match db.update_colab_doc(&org, doc_uuid, &doc_type, doc_stream_uuid, blob, json, &by_prpl).await {
+        match db.update_colab_doc(&org, doc_uuid, &doc_type, doc_stream_uuid, blob, json, state_vv_json, peer_map_json, &by_prpl).await {
             Ok(_) => {
                 info!("Statement updated successfully {}", doc_uuid);
             }

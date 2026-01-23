@@ -450,6 +450,8 @@ impl DbColab {
         doc_stream_id: uuid::Uuid,
         colab_package_blob: Vec<u8>,
         json: serde_json::Value,
+        state_vv_json: serde_json::Value,
+        peer_map_json: serde_json::Value,
         by_prpl: &str,
     ) -> Result<uuid::Uuid, SqlxError> {
         // Calculate the size of the snapshot
@@ -522,15 +524,19 @@ impl DbColab {
         let update_model_query_sql = format!(r#"
         UPDATE {}
             SET json = $1,
+                version_v = $2,
+                peer_map = $3,
                 synced = FALSE,
                 updated_at = NOW(),
-                updated_by = $2
-            WHERE org = $3
-                AND document = $4
+                updated_by = $4
+            WHERE org = $5
+                AND document = $6
             RETURNING document;
         "#, doc_table_name);
         let doc_model_row = sqlx::query(&update_model_query_sql)
             .bind(json)
+            .bind(state_vv_json)
+            .bind(peer_map_json)
             .bind(by_prpl)
             .bind(org)
             .bind(doc_id)

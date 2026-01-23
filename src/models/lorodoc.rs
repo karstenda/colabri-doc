@@ -396,8 +396,19 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
             for (idx, row) in grid_block.rows.iter().enumerate() {
                 let row_map = LoroMap::new();
                 let _ = row_map.insert("type", row.r#type.as_str());
+                
                 if let Some(s) = &row.statement_ref {
-                    let _ = row_map.insert("statementRef", s.as_str());
+                    let statement_ref_map = row_map
+                        .insert_container("statementRef", LoroMap::new())
+                        .unwrap();
+                    let _ = statement_ref_map.insert(
+                        "docId",
+                        s.doc_id.to_string().as_str(),
+                    );
+                    let _ = statement_ref_map.insert(
+                        "versionV",
+                        s.version_v.as_str(),
+                    );
                 }
 
                 if let Some(stmt) = &row.statement {

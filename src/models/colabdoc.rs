@@ -122,9 +122,17 @@ pub struct ColabSheetStatementGridRow {
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(rename = "statementRef", skip_serializing_if = "Option::is_none", )]
-    pub statement_ref: Option<String>,
+    pub statement_ref: Option<StatementRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statement: Option<ColabStatementModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatementRef {
+    #[serde(rename = "docId")]
+    pub doc_id: uuid::Uuid,
+    #[serde(rename = "versionV")]
+    pub version_v: String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
