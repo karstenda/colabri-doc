@@ -2,6 +2,7 @@ mod docs;
 mod handlers;
 mod models;
 mod routes;
+mod services;
 mod auth;
 // mod websocket; // No longer needed - using loro-websocket-server directly
 mod clients;

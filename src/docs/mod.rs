@@ -25,6 +25,18 @@ pub async fn health_check_doc() {}
 #[allow(dead_code)]
 pub async fn ready_check_doc() {}
 
+/// Get diagnostics for the server
+#[utoipa::path(
+    get,
+    path = "/api/v1/diagnostics",
+    tag = "diagnostics",
+    responses(
+        (status = 200, description = "Server diagnostics retrieved successfully", body = DiagnosticsResponse)
+    )
+)]
+#[allow(dead_code)]
+pub async fn diagnostics_doc() {}
+
 /// Export a document
 #[utoipa::path(
     get,
@@ -39,20 +51,22 @@ pub async fn ready_check_doc() {}
     )
 )]
 #[allow(dead_code)]
-pub async fn doc_export() {}
+pub async fn doc_export_doc() {}
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         health_check_doc,
         ready_check_doc,
-        doc_export,
+        diagnostics_doc,
+        doc_export_doc,
     ),
     components(
-        schemas(HealthResponse, ReadyResponse, DocumentExportResponse)
+        schemas(HealthResponse, ReadyResponse, DiagnosticsResponse, DocumentExportResponse)
     ),
     tags(
         (name = "health", description = "Health check endpoints"),
+        (name = "diagnostics", description = "Diagnostics endpoints"),
         (name = "documents", description = "Document management endpoints")
     )
 )]

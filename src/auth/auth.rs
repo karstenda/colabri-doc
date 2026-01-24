@@ -105,7 +105,7 @@ pub fn _ensure_service_or_org_member(prpls: &Vec<String>, service_name: &str, or
     })))
 }
 
-pub fn _ensure_cloud_admin(prpls: &Vec<String>) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+pub fn ensure_cloud_admin(prpls: &Vec<String>) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     if is_cloud_admin(prpls) {
         return Ok(CLOUD_ADMIN_PRPL.to_string());
     }

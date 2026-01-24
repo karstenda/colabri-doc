@@ -33,8 +33,7 @@ pub fn init_user_ctx_cache() {
     });
     info!("User cache initialized");
 }
-
-fn get_user_ctx_cache() -> &'static Cache<String, UserCtx> {
+pub fn get_user_ctx_cache() -> &'static Cache<String, UserCtx> {
     USER_CTX_CACHE
         .get()
         .expect("User cache not initialized. Call init_user_ctx_cache() first.")

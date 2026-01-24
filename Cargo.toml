@@ -33,4 +33,5 @@ tokio-tungstenite = "0.28.0"
 cookie = "0.18.1"
 jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 reqwest = { version = "0.12.26", features = ["blocking", "json"] }
+sysinfo = "0.30"
 
