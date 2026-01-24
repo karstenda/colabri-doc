@@ -1,49 +1,23 @@
 use axum::{
     extract::Request,
-    http::{self, StatusCode},
+    http::{StatusCode},
     middleware::Next,
     response::Response,
 };
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm, TokenData};
 use tracing::{error, info};
 use crate::config;
 use crate::ws::userctx;
-
-pub fn validate_jwt(token: &str, secret: &str) -> Result<TokenData<serde_json::Value>, jsonwebtoken::errors::Error> {
-    let validation = Validation::new(Algorithm::HS256);
-    let decoding_key = DecodingKey::from_secret(secret.as_bytes());
-    decode::<serde_json::Value>(token, &decoding_key, &validation)
-}
+use crate::services::auth_service::{validate_jwt, get_auth_token};
 
 pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
 
-    // 1. Try to get token from Authorization header
-    let token = if let Some(auth_header) = req.headers().get(http::header::AUTHORIZATION) {
-        auth_header.to_str().map_err(|_| StatusCode::UNAUTHORIZED)?
-            .strip_prefix("Bearer ")
-            .unwrap_or(auth_header.to_str().unwrap()) // Handle case where Bearer might be missing or different
-            .to_string()
-    }
-    // 2. Try to get token from cookies
-    else {
-        let cookie_header = req.headers().get(http::header::COOKIE)
-            .ok_or(StatusCode::UNAUTHORIZED)?
-            .to_str()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?;
-        
-        let mut token = None;
-        for cookie in cookie::Cookie::split_parse(cookie_header) {
-            if let Ok(c) = cookie {
-                if c.name() == "auth_token" {
-                    token = Some(c.value().to_string());
-                    break;
-                }
-            }
-        }
-        token.ok_or(StatusCode::UNAUTHORIZED)?
+    // 1+2. Get the auth token from the request
+    let token = match get_auth_token(&req) {
+        Ok(token) => token,
+        Err(_) => return Err(StatusCode::UNAUTHORIZED),
     };
 
     // 3. Validate Token

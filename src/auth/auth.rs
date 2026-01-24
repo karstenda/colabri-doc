@@ -29,7 +29,7 @@ pub fn _is_org_admin(prpls: &Vec<String>, org_id: &str) -> bool {
     prpls.iter().any(|p| p == &org_prefix)
 }
 
-pub fn _is_org_member(prpls: &Vec<String>, org_id: &str) -> bool {
+pub fn is_org_member(prpls: &Vec<String>, org_id: &str) -> bool {
 
     if is_cloud_admin(prpls) {
         return true;

@@ -4,24 +4,17 @@ use loro_websocket_server::{AuthArgs, CloseConnectionArgs, HandshakeAuthArgs, Lo
 use loro_websocket_server::protocol::Permission;
 use tracing::{info, warn, error};
 use uuid::Uuid;
-use std::{collections::HashMap, pin::Pin};
+use std::{pin::Pin};
 use std::future::Future;
 use serde_cbor;
-use crate::routes::auth_middleware::validate_jwt;
 
 use crate::models::ColabPackage;
 use crate::{db::dbcolab, clients::app_service_client };
+use crate::services::auth_service::{get_user_prpls, get_auth_token};
+use crate::auth::is_org_member;
 use super::docctx::{DocContext};
 use super::userctx::{self};
 use super::connctx::{self, ConnCtx};
-
-fn user_has_org_access(principals: &[String], org_id: &str) -> bool {
-    let org_prefix = format!("{}/u/", org_id);
-    principals.iter().any(|principal| {
-        principal.starts_with(&org_prefix) || principal == "r/Colabri-CloudAdmin"
-    })
-}
-
 
 /// Authenticate a client
 ///
@@ -34,69 +27,38 @@ fn user_has_org_access(principals: &[String], org_id: &str) -> bool {
 /// # Returns
 pub fn on_auth_handshake(args: HandshakeAuthArgs) -> bool {
     let org_id = args.workspace;
-    
-    // Extract cookies from the request headers
-    let mut cookie_map: HashMap<String, String> = HashMap::new();
-    if let Some(header) = args.request.headers().get("Cookie") {
-        if let Ok(s) = header.to_str() {
-            for cookie in cookie::Cookie::split_parse(s) {
-                if let Ok(c) = cookie {
-                    cookie_map.insert(c.name().to_string(), c.value().to_string());
-                }
+
+    // Extract the token from the request
+    let auth_token =  match get_auth_token(args.request) {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Failed to get auth token from handshake request: {}", e);
+            return false;
+        }
+    };
+
+    // Extract the prpls of the user
+    match get_user_prpls(&auth_token) {
+        Ok((uid, prpls)) => {
+            info!("User {} authenticated with principals: {:?}", uid, prpls);
+            // Validate user has access to the organization
+            if !is_org_member(&prpls, &org_id) {
+                error!("User {} does not have access to organization {}", uid, org_id);
+                return false;
+            } else {
+                let conn_ctx = ConnCtx {
+                    uid: uid.to_string(),
+                    org_id: org_id.to_string(),
+                };
+                let conn_ctx_cache = connctx::get_conn_ctx_cache();
+                conn_ctx_cache.insert(args.conn_id, conn_ctx);
+                return true;
             }
         }
-    }
-
-    // Check if there's an 'auth_token' cookie
-    let auth_token = cookie_map.get("auth_token");
-    if auth_token.is_none() {
-        error!("No auth_token cookie found in handshake request");
-        return false;
-    } 
-
-    // Validate the auth_token as a JWT token
-    let token = auth_token.unwrap();
-    let config = crate::config::get_config();
-
-    if let Some(secret) = &config.cloud_auth_jwt_secret {
-        match validate_jwt(token, secret) {
-            Ok(token_data) => {
-                if let Some(uid) = token_data.claims.get("sub").and_then(|v| v.as_str()) {
-                    info!("JWT token validated successfully for user: {}", uid);
-                    
-                    return match userctx::get_or_fetch_user_ctx_blocking(uid) {
-                        Ok(user_ctx) => {
-                            if !user_has_org_access(&user_ctx.principals, &org_id) {
-                                error!("User {} does not have access to organization {}", uid, org_id);
-                                false
-                            } else {
-                                let conn_ctx = ConnCtx {
-                                    uid: uid.to_string(),
-                                    org_id: org_id.to_string(),
-                                };
-                                let conn_ctx_cache = connctx::get_conn_ctx_cache();
-                                conn_ctx_cache.insert(args.conn_id, conn_ctx);
-                                true
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to load user context for {}: {}", uid, e);
-                            false
-                        }
-                    };
-                } else {
-                    error!("Can't extract a UID from the JWT token");
-                    false
-                }
-            },
-            Err(e) => {
-                error!("JWT validation failed: {}", e);
-                false
-            }
+        Err(e) => {
+            error!("Failed to get user principals from auth token: {}", e);
+            return false;
         }
-    } else {
-        warn!("No JWT secret configured, skipping validation (INSECURE)");
-        true
     }
 }
 
@@ -123,6 +85,8 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
 
         let uid_for_fetch = conn_ctx.uid.clone();
         let org_for_fetch = conn_ctx.org_id.clone();
+
+        // Load the user context to get the principals
         let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid_for_fetch).await {
             Ok(ctx) => ctx,
             Err(e) => {
@@ -130,7 +94,7 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
                 return Err(e);
             }
         };
-        if !user_has_org_access(&user_ctx.principals, &org_for_fetch) {
+        if !is_org_member(&user_ctx.principals, &org_for_fetch) {
             error!("User {} does not have access to organization {}", conn_ctx.uid, org_for_fetch);
             return Err("User lacks access to organization".to_string());
         }
@@ -413,7 +377,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
             let conn_org = conn_ctx.org_id.clone();
             info!("Received update from user: {} on doc: {}", uid, room_id);
 
-            let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid).await {
+            let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&uid) {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     error!("Unable to load user context for uid {}: {}", uid, e);
@@ -424,7 +388,7 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
                     };
                 }
             };
-            if !user_has_org_access(&user_ctx.principals, &conn_org) {
+            if !is_org_member(&user_ctx.principals, &conn_org) {
                 error!("User {} does not have access to organization {}", uid, conn_org);
                 return UpdatedDoc {
                     status: UpdateStatusCode::PermissionDenied,
