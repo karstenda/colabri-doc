@@ -57,8 +57,14 @@ pub async fn auth_middleware(
             return Err(StatusCode::UNAUTHORIZED);
         };
 
-        // 7A. Load User Context and the prpls for the user
-        let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&user_uid) {
+        // 7A. Get the roles from the JWT claims
+        let roles = match token_data.claims.get("roles").and_then(|v| v.as_array()) {
+            Some(roles_array) => roles_array.iter().filter_map(|r| r.as_str().map(|s| s.to_string())).collect::<Vec<String>>(),
+            None => Vec::new(),
+        };
+
+        // 8A. Load User Context and the prpls for the user
+        let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&user_uid, roles) {
             Ok(user_ctx) => {
                 user_ctx
             }
@@ -67,19 +73,7 @@ pub async fn auth_middleware(
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         };
-        let mut prpls = user_ctx.principals.clone();
-
-        // 8A. Add any roles from the JWT claims to the principals
-        let roles = match token_data.claims.get("roles").and_then(|v| v.as_array()) {
-            Some(roles_array) => roles_array.iter().filter_map(|r| r.as_str().map(|s| s.to_string())).collect::<Vec<String>>(),
-            None => Vec::new(),
-        };
-        for role in roles {
-            let role_prpl = format!("r/{}", role);
-            if !prpls.contains(&role_prpl) {
-                prpls.push(role_prpl);
-            }
-        }
+        let prpls = user_ctx.get_all_prpls();
 
         // 9A. Set these principals into request extensions for downstream handlers
         {

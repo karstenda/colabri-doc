@@ -197,10 +197,13 @@ impl DbColab {
             SELECT DISTINCT d.*
             FROM documents d
             LEFT JOIN document_acl da ON d.id = da.document
+            LEFT JOIN libraries l ON d.container = l.id AND d.container_type = 'library'
+            LEFT JOIN library_acl la ON l.id = la.library
             WHERE
                 d.org = $1
                 AND (
                         (da.permission = 'view' AND da.prpl = ANY($2::text[])) OR
+                        (la.permission = 'view' AND la.prpl = ANY($2::text[])) OR
                         d.owner = ANY($2::text[]) OR
                         CONCAT($1, '/f/admin') = ANY($2::text[]) OR
                         'r/Colabri-CloudAdmin' = ANY($2::text[])

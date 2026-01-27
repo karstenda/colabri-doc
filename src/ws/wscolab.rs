@@ -87,11 +87,11 @@ pub fn on_authenticate(args: AuthArgs) -> Pin<Box<dyn Future<Output = Result<Opt
         let org_for_fetch = conn_ctx.org_id.clone();
 
         // Load the user context to get the principals
-        let user_ctx = match userctx::get_or_fetch_user_ctx_async(&uid_for_fetch).await {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                error!("Unable to load user context for uid {}: {}", conn_ctx.uid, e);
-                return Err(e);
+        let user_ctx = match userctx::get_user_ctx_from_cache(&uid_for_fetch) {
+            Some(ctx) => ctx,
+            None => {
+                error!("Unable to load user context for uid {} from cache", conn_ctx.uid);
+                return Err("Unable to load user context from cache".to_string());
             }
         };
         if !is_org_member(&user_ctx.principals, &org_for_fetch) {
@@ -167,7 +167,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
     let doc_id = args.room;
     let org_id = args.workspace;
     Box::pin(async move {
-        match crate::services::doc_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
+        match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
             Ok(Some((snapshot, ctx))) => Ok(LoadedDoc { snapshot: Some(snapshot), ctx: Some(ctx) }),
             Ok(None) => Ok(LoadedDoc { snapshot: None, ctx: None }),
             Err(e) => Err(e),
@@ -377,10 +377,10 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
             let conn_org = conn_ctx.org_id.clone();
             info!("Received update from user: {} on doc: {}", uid, room_id);
 
-            let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&uid) {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    error!("Unable to load user context for uid {}: {}", uid, e);
+            let user_ctx = match userctx::get_user_ctx_from_cache(&uid) {
+                Some(ctx) => ctx,
+                None => {
+                    error!("Unable to load user context for uid {}", uid);
                     return UpdatedDoc {
                         status: UpdateStatusCode::PermissionDenied,
                         ctx: Some(doc_ctx),

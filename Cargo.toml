@@ -22,8 +22,8 @@ futures-util = "0.3.31"
 loro = "^1"
 chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
-loro-websocket-server = { git = "https://github.com/karstenda/loro-protocol.git", rev = "36e496660f22023efcb5765723f196e1d3752d9a", package = "loro-websocket-server"}
-loro-protocol = { git = "https://github.com/karstenda/loro-protocol.git", rev = "36e496660f22023efcb5765723f196e1d3752d9a", package = "loro-protocol"}
+loro-websocket-server = { git = "https://github.com/karstenda/loro-protocol.git", rev = "5f1ae749d4822b283f330b63e32a80bb7746f78a", package = "loro-websocket-server"}
+loro-protocol = { git = "https://github.com/karstenda/loro-protocol.git", rev = "5f1ae749d4822b283f330b63e32a80bb7746f78a", package = "loro-protocol"}
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
 sea-query = "0.31"
 sea-query-binder = { version = "0.6", features = ["sqlx-postgres"] }

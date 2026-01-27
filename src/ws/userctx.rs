@@ -10,6 +10,7 @@ use crate::clients::app_service_client;
 #[derive(Clone, Debug)]
 pub struct UserCtx {
     pub principals: Vec<String>,
+    pub token_roles: Vec<String>,
 }
 
 impl UserCtx {
@@ -19,6 +20,16 @@ impl UserCtx {
             .iter()
             .find(|principal| principal.starts_with(&org_prefix))
             .cloned()
+    }
+
+    pub fn get_all_prpls(&self) -> Vec<String> {
+        // Get the calculated principals for the user
+        let mut all_prpls = self.principals.clone();
+        // Get the roles from the token and add them as principals
+        for prpl in &self.token_roles {
+            all_prpls.push("r/".to_string() + prpl);
+        }
+        all_prpls
     }
 }
 
@@ -53,7 +64,7 @@ fn parse_principals_from_json(prpls_json: Value) -> Vec<String> {
     }
 }
 
-async fn fetch_user_ctx_from_service(uid: &str) -> Result<UserCtx, String> {
+async fn fetch_user_prpls_from_service(uid: &str) -> Result<Vec<String>, String> {
     let client = app_service_client::get_app_service_client()
         .ok_or_else(|| "App service client not initialized".to_string())?;
 
@@ -67,10 +78,15 @@ async fn fetch_user_ctx_from_service(uid: &str) -> Result<UserCtx, String> {
 
     info!("Retrieved principals for user {}: {}", uid, prpls_json);
     let principals = parse_principals_from_json(prpls_json);
-    Ok(UserCtx { principals })
+    Ok(principals)
 }
 
-pub async fn get_or_fetch_user_ctx_async(uid: &str) -> Result<UserCtx, String> {
+pub fn get_user_ctx_from_cache(uid: &str) -> Option<UserCtx> {
+    let cache = get_user_ctx_cache();
+    cache.get(uid)
+}
+
+pub async fn get_or_fetch_user_ctx_async(uid: &str, token_roles: Vec<String>) -> Result<UserCtx, String> {
     let cache = get_user_ctx_cache();
 
     if let Some(ctx) = cache.get(uid) {
@@ -78,18 +94,25 @@ pub async fn get_or_fetch_user_ctx_async(uid: &str) -> Result<UserCtx, String> {
     }
 
     info!("User context cache miss for uid {}. Refreshing from app service.", uid);
-    let fetched_ctx = fetch_user_ctx_from_service(uid).await?;
-
-    cache.insert(uid.to_string(), fetched_ctx.clone());
-    Ok(fetched_ctx)
+    let fetched_prpls = fetch_user_prpls_from_service(uid).await?;
+    
+    // Create a new user context and insert it into the cache
+    let new_ctx = UserCtx {
+        principals: fetched_prpls,
+        token_roles: token_roles,
+    };
+    cache.insert(uid.to_string(), new_ctx.clone());
+    
+    // Return the newly created user context
+    Ok(new_ctx)
 }
 
-pub fn get_or_fetch_user_ctx_blocking(uid: &str) -> Result<UserCtx, String> {
+pub fn get_or_fetch_user_ctx_blocking(uid: &str, token_roles: Vec<String>) -> Result<UserCtx, String> {
     let uid_owned = uid.to_string();
 
     tokio::task::block_in_place(move || {
         Handle::current().block_on(async move {
-            get_or_fetch_user_ctx_async(&uid_owned).await
+            get_or_fetch_user_ctx_async(&uid_owned, token_roles).await
         })
     })
 }

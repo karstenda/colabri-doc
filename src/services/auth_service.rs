@@ -43,25 +43,19 @@ pub fn get_user_prpls(token: &str) -> Result<(String, Vec<String>), String> {
             Ok(token_data) => {
                 if let Some(uid) = token_data.claims.get("sub").and_then(|v| v.as_str()) {
                     info!("JWT token validated successfully for user: {}", uid);
-                    
+
+                    // Get roles from the token claims
+                    let roles = match token_data.claims.get("roles").and_then(|v| v.as_array()) {
+                        Some(roles_array) => roles_array.iter().filter_map(|r| r.as_str().map(|s| s.to_string())).collect::<Vec<String>>(),
+                        None => Vec::new(),
+                    };
+
                     // When we have the UID, fetch the user context
-                    return match userctx::get_or_fetch_user_ctx_blocking(uid) {
+                    return match userctx::get_or_fetch_user_ctx_blocking(uid, roles) {
                         Ok(user_ctx) => {
-
-                            // Add any roles from the JWT claims to the principals of the user_ctx
-                            let prpls = &mut user_ctx.principals.clone();
-                            let roles = match token_data.claims.get("roles").and_then(|v| v.as_array()) {
-                                Some(roles_array) => roles_array.iter().filter_map(|r| r.as_str().map(|s| s.to_string())).collect::<Vec<String>>(),
-                                None => Vec::new(),
-                            };
-                            for role in roles {
-                                let role_prpl = format!("r/{}", role);
-                                if !prpls.contains(&role_prpl) {
-                                    prpls.push(role_prpl);
-                                }
-                            }
-
-                            return Ok((uid.to_string(), prpls.clone()));
+                            // Get all the principals for the user
+                            let prpls = user_ctx.get_all_prpls();
+                            return Ok((uid.to_string(), prpls));
                         }
                         Err(e) => {
                             Err(format!("Failed to load user context for {}: {}", uid, e))

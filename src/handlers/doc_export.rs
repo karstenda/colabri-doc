@@ -84,7 +84,7 @@ pub async fn doc_export(
     }
 
     // If not found in memory, try to load from database
-    let (snapshot, ctx) = match crate::services::doc_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
+    let (snapshot, ctx) = match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
         Ok(Some(res)) => res,
         Ok(None) => {
             error!("Document '{}' not found in organization '{}'", doc_id, org_id);
