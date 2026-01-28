@@ -1,4 +1,4 @@
-use crate::{auth::auth, models::{DocumentLibraryMoveRequest, DocumentLibraryMoveResponse, ErrorResponse}, services::doc_edit_service, ws::docctx::DocContext};
+use crate::{auth::auth, models::{DocumentClearAclResponse, ErrorResponse}, services::doc_edit_service, ws::docctx::DocContext};
 use axum::{Json, extract::{Extension, Path, State}, http::StatusCode};
 use loro_websocket_server::HubRegistry;
 use std::sync::Arc;
@@ -6,19 +6,15 @@ use tracing::error;
 use loro::{LoroDoc, LoroMap};
 use uuid::Uuid;
 
-/// Move a document to a library
-pub async fn doc_lib(
+/// Clear ACLs for a document
+pub async fn doc_clear_acl(
     State(registry): State<Arc<HubRegistry<DocContext>>>,
     Extension(prpls): Extension<Vec<String>>,
-    Path((org_id, lib_name)): Path<(String, String)>,
-    Json(payload): Json<DocumentLibraryMoveRequest>,
-) -> Result<(StatusCode, Json<DocumentLibraryMoveResponse>), (StatusCode, Json<ErrorResponse>)> {
+    Path((org_id, doc_id)): Path<(String, String)>,
+) -> Result<(StatusCode, Json<DocumentClearAclResponse>), (StatusCode, Json<ErrorResponse>)> {
 
     // Ensure the user is an org member or service
     let _ = auth::ensure_service(&prpls, "colabri-app")?;
-
-    // Get the document ID from the payload
-    let doc_id = payload.doc_id;
 
     // Parse the doc_id as an UUID
     let _doc_uuid = match Uuid::parse_str(&doc_id) {
@@ -58,11 +54,6 @@ pub async fn doc_lib(
                     return Err(format!("Unknown or unsupported document type: {}", type_str));
                 }
             }
-
-            // Update the library
-            if let Err(e) = props.insert("library", lib_name.clone()) {
-                return Err(format!("Failed to update library: {}", e));
-            }
         } else {
              return Err(format!("Document type property not found for document '{}'", doc_id));
         }
@@ -73,17 +64,17 @@ pub async fn doc_lib(
         Ok(_) => 
             Ok((
                 StatusCode::OK,
-                Json(DocumentLibraryMoveResponse {
+                Json(DocumentClearAclResponse {
                     success: true,
                 }),
             )),
         Err(e) => {
-            error!("Failed to move document '{}' to library '{}': {}", doc_id, lib_name, e);
+            error!("Failed to clear ACLs for document '{}': {}", doc_id, e);
             let status = StatusCode::INTERNAL_SERVER_ERROR;
             Err((status, Json(ErrorResponse {
                 code: status.as_u16(),
                 status: status.to_string(),
-                error: format!("Failed to move document '{}' to library '{}': {}", doc_id, lib_name, e),
+                error: format!("Failed to clear ACLs for document '{}': {}", doc_id, e),
             })))
         }
     }

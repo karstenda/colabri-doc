@@ -53,6 +53,22 @@ pub async fn diagnostics_doc() {}
 #[allow(dead_code)]
 pub async fn doc_export_doc() {}
 
+/// Clear all ACLs in a document
+#[utoipa::path(
+    post,
+    path = "/api/v1/{org_id}/documents/{doc_id}/clear-acl",
+    tag = "documents",
+    responses(
+        (status = 200, description = "ACLs cleared successfully", body = DocumentClearAclResponse)
+    ),
+    params(
+        ("org_id" = String, Path, description = "Organization ID"),
+        ("doc_id" = String, Path, description = "Document ID")
+    )
+)]
+#[allow(dead_code)]
+pub async fn doc_clear_acl_doc() {}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -60,6 +76,7 @@ pub async fn doc_export_doc() {}
         ready_check_doc,
         diagnostics_doc,
         doc_export_doc,
+        doc_clear_acl_doc,
     ),
     components(
         schemas(HealthResponse, ReadyResponse, DiagnosticsResponse, DocumentExportResponse)
