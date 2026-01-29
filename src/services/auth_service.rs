@@ -32,7 +32,7 @@ pub fn get_auth_token<B>(req: &http::Request<B>) -> Result<String, String> {
 }
 
 // Get the user principals from a JWT token
-pub fn get_user_prpls(token: &str) -> Result<(String, Vec<String>), String> {
+pub fn get_user_prpls(token: &str, force_refresh: bool) -> Result<(String, Vec<String>), String> {
    
     // Validate the auth_token as a JWT token
     let config = crate::config::get_config();
@@ -51,7 +51,7 @@ pub fn get_user_prpls(token: &str) -> Result<(String, Vec<String>), String> {
                     };
 
                     // When we have the UID, fetch the user context
-                    return match userctx::get_or_fetch_user_ctx_blocking(uid, roles) {
+                    return match userctx::get_or_fetch_user_ctx_blocking(uid, roles, force_refresh) {
                         Ok(user_ctx) => {
                             // Get all the principals for the user
                             let prpls = user_ctx.get_all_prpls();

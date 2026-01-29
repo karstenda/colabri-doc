@@ -38,7 +38,7 @@ pub fn on_auth_handshake(args: HandshakeAuthArgs) -> bool {
     };
 
     // Extract the prpls of the user
-    match get_user_prpls(&auth_token) {
+    match get_user_prpls(&auth_token, true) {
         Ok((uid, prpls)) => {
             info!("User {} authenticated with principals: {:?}", uid, prpls);
             // Validate user has access to the organization

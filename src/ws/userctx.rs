@@ -39,7 +39,7 @@ pub fn init_user_ctx_cache() {
     USER_CTX_CACHE.get_or_init(|| {
         Cache::builder()
             .max_capacity(100_000)
-            .time_to_idle(Duration::from_secs(5 * 60))
+            .time_to_idle(Duration::from_secs(4 * 60 * 60))
             .build()
     });
     info!("User cache initialized");
@@ -86,14 +86,20 @@ pub fn get_user_ctx_from_cache(uid: &str) -> Option<UserCtx> {
     cache.get(uid)
 }
 
-pub async fn get_or_fetch_user_ctx_async(uid: &str, token_roles: Vec<String>) -> Result<UserCtx, String> {
+pub async fn get_or_fetch_user_ctx_async(uid: &str, token_roles: Vec<String>, force_refresh: bool) -> Result<UserCtx, String> {
+    
+    // Get the user context cache
     let cache = get_user_ctx_cache();
 
-    if let Some(ctx) = cache.get(uid) {
-        return Ok(ctx);
+    // If not forcing refresh, try to get from cache first
+    if !force_refresh {
+        if let Some(ctx) = cache.get(uid) {
+            return Ok(ctx);
+        }
+        info!("User context cache miss for uid {}. Refreshing from app service.", uid);
     }
 
-    info!("User context cache miss for uid {}. Refreshing from app service.", uid);
+    // Fetch principals from the app service to create a new user context
     let fetched_prpls = fetch_user_prpls_from_service(uid).await?;
     
     // Create a new user context and insert it into the cache
@@ -107,12 +113,12 @@ pub async fn get_or_fetch_user_ctx_async(uid: &str, token_roles: Vec<String>) ->
     Ok(new_ctx)
 }
 
-pub fn get_or_fetch_user_ctx_blocking(uid: &str, token_roles: Vec<String>) -> Result<UserCtx, String> {
+pub fn get_or_fetch_user_ctx_blocking(uid: &str, token_roles: Vec<String>, force_refresh: bool) -> Result<UserCtx, String> {
     let uid_owned = uid.to_string();
 
     tokio::task::block_in_place(move || {
         Handle::current().block_on(async move {
-            get_or_fetch_user_ctx_async(&uid_owned, token_roles).await
+            get_or_fetch_user_ctx_async(&uid_owned, token_roles, force_refresh).await
         })
     })
 }

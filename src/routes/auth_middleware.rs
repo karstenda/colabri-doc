@@ -64,7 +64,7 @@ pub async fn auth_middleware(
         };
 
         // 8A. Load User Context and the prpls for the user
-        let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&user_uid, roles) {
+        let user_ctx = match userctx::get_or_fetch_user_ctx_blocking(&user_uid, roles, true) {
             Ok(user_ctx) => {
                 user_ctx
             }
