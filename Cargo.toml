@@ -22,8 +22,8 @@ futures-util = "0.3.31"
 loro = "^1"
 chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
-loro-websocket-server = { git = "https://github.com/karstenda/loro-protocol.git", rev = "5f1ae749d4822b283f330b63e32a80bb7746f78a", package = "loro-websocket-server"}
-loro-protocol = { git = "https://github.com/karstenda/loro-protocol.git", rev = "5f1ae749d4822b283f330b63e32a80bb7746f78a", package = "loro-protocol"}
+loro-websocket-server = { git = "https://github.com/karstenda/loro-protocol.git", rev = "48700f6cea48a831fd19524867913f51212cb5a8", package = "loro-websocket-server"}
+loro-protocol = { git = "https://github.com/karstenda/loro-protocol.git", rev = "48700f6cea48a831fd19524867913f51212cb5a8", package = "loro-protocol"}
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
 sea-query = "0.31"
 sea-query-binder = { version = "0.6", features = ["sqlx-postgres"] }
@@ -34,4 +34,12 @@ cookie = "0.18.1"
 jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 reqwest = { version = "0.12.26", features = ["blocking", "json"] }
 sysinfo = "0.30"
+
+# Disable debug info for dependencies to prevent debugger issues
+[profile.dev.package."*"]
+debug = false
+
+# Keep full debug info for your own code
+[profile.dev]
+debug = 2
 

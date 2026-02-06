@@ -406,6 +406,10 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
                         s.doc_id.to_string().as_str(),
                     );
                     let _ = statement_ref_map.insert(
+                        "version",
+                        s.version,
+                    );
+                    let _ = statement_ref_map.insert(
                         "versionV",
                         s.version_v.as_str(),
                     );

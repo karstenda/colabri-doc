@@ -38,12 +38,14 @@ pub async fn ready_check_doc() {}
 pub async fn diagnostics_doc() {}
 
 /// Export a document
+/// 
+/// This endpoint will always return the latest state of a document.
 #[utoipa::path(
     get,
-    path = "/api/v1/{org_id}/documents/{doc_id}/export",
+    path = "/api/v1/{org_id}/documents/{doc_id}/latest",
     tag = "documents",
     responses(
-        (status = 200, description = "Document exported successfully", body = DocumentExportResponse)
+        (status = 200, description = "Latest document state retrieved successfully", body = DocumentLatestResponse)
     ),
     params(
         ("org_id" = String, Path, description = "Organization ID"),
@@ -51,15 +53,18 @@ pub async fn diagnostics_doc() {}
     )
 )]
 #[allow(dead_code)]
-pub async fn doc_export_doc() {}
+pub async fn doc_latest_doc() {}
 
-/// Clear all ACLs in a document
+/// Export a document
+/// 
+/// This endpoint will return the state of a document at a specific point in time determined by the version parameters. Since the version vector can be large, this is a POST endpoint that accepts the version parameters in the request body. It does however never modify the state of the document.
 #[utoipa::path(
     post,
-    path = "/api/v1/{org_id}/documents/{doc_id}/clear-acl",
+    path = "/api/v1/{org_id}/documents/{doc_id}/version",
     tag = "documents",
+    request_body(content = DocumentVersionRequest, description = "Version request parameters"),
     responses(
-        (status = 200, description = "ACLs cleared successfully", body = DocumentClearAclResponse)
+        (status = 200, description = "Document version state retrieved successfully", body = DocumentVersionResponse)
     ),
     params(
         ("org_id" = String, Path, description = "Organization ID"),
@@ -67,7 +72,25 @@ pub async fn doc_export_doc() {}
     )
 )]
 #[allow(dead_code)]
-pub async fn doc_clear_acl_doc() {}
+pub async fn doc_version_doc() {}
+
+/// Move a document to a library
+/// 
+/// This endpoint moves a document to a library. It is used when a user wants to move a document from their personal space to a shared library.
+#[utoipa::path(
+    post,
+    path = "/api/v1/{org_id}/documents/{doc_id}/move-lib",
+    tag = "documents",
+    responses(
+        (status = 200, description = "Document moved successfully", body = DocumentMoveLibResponse)
+    ),
+    params(
+        ("org_id" = String, Path, description = "Organization ID"),
+        ("doc_id" = String, Path, description = "Document ID")
+    )
+)]
+#[allow(dead_code)]
+pub async fn doc_move_lib_doc() {}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -75,11 +98,18 @@ pub async fn doc_clear_acl_doc() {}
         health_check_doc,
         ready_check_doc,
         diagnostics_doc,
-        doc_export_doc,
-        doc_clear_acl_doc,
+        doc_latest_doc,
+        doc_version_doc,
+        doc_move_lib_doc,
     ),
     components(
-        schemas(HealthResponse, ReadyResponse, DiagnosticsResponse, DocumentExportResponse)
+        schemas(HealthResponse, 
+            ReadyResponse, 
+            DiagnosticsResponse, 
+            DocumentLatestResponse, 
+            DocumentVersionRequest, 
+            DocumentVersionResponse, 
+            ErrorResponse)
     ),
     tags(
         (name = "health", description = "Health check endpoints"),

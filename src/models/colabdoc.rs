@@ -131,6 +131,8 @@ pub struct ColabSheetStatementGridRow {
 pub struct StatementRef {
     #[serde(rename = "docId")]
     pub doc_id: uuid::Uuid,
+    #[serde(rename = "version")]
+    pub version: u32,
     #[serde(rename = "versionV")]
     pub version_v: String
 }

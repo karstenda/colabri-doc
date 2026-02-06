@@ -1,55 +1,40 @@
 use std::sync::Arc;
 use loro_protocol::CrdtType;
 use loro_websocket_server::{HubRegistry, RoomKey};
-use tracing::error;
 use loro::LoroDoc;
 use crate::ws::docctx::DocContext;
+use tracing::{info};
 
-// Create a defer close struct to close the document room when dropped
-struct DeferClose {
-    registry: Arc<HubRegistry<DocContext>>,
-    org_id: String,
-    doc_id: String,
-}
 
-impl Drop for DeferClose {
-    fn drop(&mut self) {
-        let registry = self.registry.clone();
-        let org_id = self.org_id.clone();
-        let doc_id = self.doc_id.clone();
-        tokio::spawn(async move {
-            if !registry.close_room(&org_id, CrdtType::Loro, &doc_id, false).await {
-                error!("Failed to close document '{}'", doc_id);
-            }
-        });
-    }
-}
+// Edit a document by opening it in the Hub, applying the edit_callback, and then making sure to close it
+pub async fn edit_doc(registry: Arc<HubRegistry<DocContext>>, org_id: &str, doc_id: &str, edit_callback: impl FnOnce(&LoroDoc) -> Result<(), String> + Send, force_close: bool) -> Result<(), String> {
 
-// Edit a document by opening it in the Hub, applying the edit_callback, and then making sure to closie it
-pub async fn edit_doc(registry: Arc<HubRegistry<DocContext>>, org_id: &str, doc_id: &str, edit_callback: impl FnOnce(&LoroDoc) -> Result<(), String>) -> Result<(), String> {
-
-    // Open the document room
-    registry.open_room(&org_id, CrdtType::Loro, &doc_id).await;
-
-    // Whatever happens, make sure to close the document room after we're done
-    let _defer_close = DeferClose {
-        registry: registry.clone(),
-        org_id: org_id.to_string(),
-        doc_id: doc_id.to_string(),
+    // Do the edit
+    let edit_result = registry.edit_loro_doc(org_id, doc_id, edit_callback, Some(true)).await;
+    let peer_id = match edit_result {
+        Ok(peer_id) => peer_id,
+        Err(e) => return Err(format!("Failed to edit document: {}", e)),
     };
+    info!("Edited document {} in org {}, peer_id: {}", doc_id, org_id, peer_id);
 
-    // Target the document in the Hub and apply the edit callback
+    // Add the peer_id to the DocContext's peer_map with a value of "colabri-doc" to indicate that this edit was made by the colabri-doc service.
+    // This way, when we look at the peer_map in the future, we can see which edits were made by the service and which were made by real users.
     {
         let hubs = registry.hubs().lock().await;
         if let Some(hub) = hubs.get(org_id) {
-            let h = hub.lock().await;
-            if let Some(doc_state) = h.docs.get(&RoomKey {crdt: CrdtType::Loro, room: doc_id.to_string()}) {
-                if let Some(doc) = doc_state.doc.get_loro_doc() {
-                    return edit_callback(&doc);
+            let mut h = hub.lock().await;
+            if let Some(doc_state) = h.docs.get_mut(&RoomKey { crdt: CrdtType::Loro, room: doc_id.to_string() }) {
+                if let Some(ctx) = doc_state.ctx.as_mut() {
+                    ctx.peer_map.insert(peer_id, "s/colabri-doc".to_string());
                 }
             }
         }
     }
+    info!("Updated the peer map for document {} in org {}, peer_id: {}, prpl: {}", doc_id, org_id, peer_id, "s/colabri-doc");
 
-    Ok(())
+    // Close the room.
+    registry.close_room(&org_id,  CrdtType::Loro, &doc_id, force_close).await;
+    info!("Closed room for document {} in org {}, force_close: {}", doc_id, org_id, force_close);
+    
+    return Ok(());
 }

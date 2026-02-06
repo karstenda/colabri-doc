@@ -167,7 +167,7 @@ pub fn on_load_document(args: LoadDocArgs) -> Pin<Box<dyn Future<Output = Result
     let doc_id = args.room;
     let org_id = args.workspace;
     Box::pin(async move {
-        match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
+        match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id, None).await {
             Ok(Some((snapshot, ctx))) => Ok(LoadedDoc { snapshot: Some(snapshot), ctx: Some(ctx) }),
             Ok(None) => Ok(LoadedDoc { snapshot: None, ctx: None }),
             Err(e) => Err(e),
@@ -498,6 +498,10 @@ pub fn on_update(args: UpdateArgs<DocContext>) -> Pin<Box<dyn Future<Output = Up
         // Update the last updating peer in the document context
         info!("Prpl {} updated document {} with peer {}", by_prpl, room_id, updating_peer_id);
         doc_ctx.last_updating_peer = Some(updating_peer_id);
+
+        // Check the actual operations in the updates to see if there are any that we might want to reject.
+        //let updates = loro_doc.export_json_updates_without_peer_compression(&init_version_vector, &updated_version_vector);
+        info!("TODO: Implement operation level validation for document updates. Currently accepting all updates by '{}' for document '{}' with owner '{}'", by_prpl, room_id, doc_ctx.doc_owner);
 
         // Return OK
         return UpdatedDoc {

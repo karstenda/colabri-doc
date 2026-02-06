@@ -1,4 +1,4 @@
-use crate::{auth::auth, models::{DocumentExportResponse, ErrorResponse}, ws::docctx::DocContext};
+use crate::{auth::auth, models::{DocumentLatestResponse, ErrorResponse}, ws::docctx::DocContext};
 use axum::{extract::{State, Path, Extension}, http::StatusCode, Json};
 use loro_protocol::CrdtType;
 use loro_websocket_server::{HubRegistry, RoomKey};
@@ -8,11 +8,11 @@ use loro::{ToJson, LoroDoc};
 use uuid::Uuid;
 
 /// Export a document
-pub async fn doc_export(
+pub async fn doc_latest(
     State(registry): State<Arc<HubRegistry<DocContext>>>,
     Extension(prpls): Extension<Vec<String>>,
     Path((org_id, doc_id)): Path<(String, String)>,
-) -> Result<(StatusCode, Json<DocumentExportResponse>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(StatusCode, Json<DocumentLatestResponse>), (StatusCode, Json<ErrorResponse>)> {
 
     // Ensure the user is an org member or service
     let _ = auth::ensure_service(&prpls, "colabri-app")?;
@@ -60,7 +60,7 @@ pub async fn doc_export(
                         }))
                     })?;
 
-                    Some((json, state_vv_json, peer_map_json))
+                    Some((json, state_vv_json, peer_map_json, ctx.doc_version))
                 } else {
                     None
                 }
@@ -72,11 +72,12 @@ pub async fn doc_export(
         }
     };
 
-    if let Some((json, version_v, peer_map)) = mem_data {
+    if let Some((json, version_v, peer_map, doc_version)) = mem_data {
         return Ok((
             StatusCode::OK,
-            Json(DocumentExportResponse {
+            Json(DocumentLatestResponse {
                 json,
+                version: doc_version,
                 version_v,
                 peer_map,
             }),
@@ -84,7 +85,7 @@ pub async fn doc_export(
     }
 
     // If not found in memory, try to load from database
-    let (snapshot, ctx) = match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id).await {
+    let (snapshot, ctx) = match crate::services::doc_db_service::fetch_doc_snapshot_from_db(&org_id, &doc_id, None).await {
         Ok(Some(res)) => res,
         Ok(None) => {
             error!("Document '{}' not found in organization '{}'", doc_id, org_id);
@@ -143,8 +144,9 @@ pub async fn doc_export(
 
     Ok((
         StatusCode::OK,
-        Json(DocumentExportResponse {
+        Json(DocumentLatestResponse {
             json: json,
+            version: ctx.doc_version,
             version_v: state_vv_json,
             peer_map: peer_map_json,
         }),

@@ -1,23 +1,29 @@
-use crate::{auth::auth, models::{DocumentClearAclResponse, ErrorResponse}, services::doc_edit_service, ws::docctx::DocContext};
+use crate::{auth::auth, models::{DocumentMoveLibRequest, DocumentMoveLibResponse, ErrorResponse}, services::doc_edit_service, ws::docctx::DocContext};
 use axum::{Json, extract::{Extension, Path, State}, http::StatusCode};
 use loro_websocket_server::HubRegistry;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 use loro::{LoroDoc, LoroMap};
 use uuid::Uuid;
+use crate::db::dbcolab;
 
 /// Clear ACLs for a document
-pub async fn doc_clear_acl(
+pub async fn doc_move_lib(
     State(registry): State<Arc<HubRegistry<DocContext>>>,
     Extension(prpls): Extension<Vec<String>>,
     Path((org_id, doc_id)): Path<(String, String)>,
-) -> Result<(StatusCode, Json<DocumentClearAclResponse>), (StatusCode, Json<ErrorResponse>)> {
+    Json(request): Json<DocumentMoveLibRequest>,
+) -> Result<(StatusCode, Json<DocumentMoveLibResponse>), (StatusCode, Json<ErrorResponse>)> {
 
     // Ensure the user is an org member or service
     let _ = auth::ensure_service(&prpls, "colabri-app")?;
 
+    // Extract library_id from request
+    let library_id_string = request.library_id;
+    let by_prpl = request.by_prpl;
+
     // Parse the doc_id as an UUID
-    let _doc_uuid = match Uuid::parse_str(&doc_id) {
+    let doc_uuid = match Uuid::parse_str(&doc_id) {
         Ok(uuid) => uuid,
         Err(e) => {
             error!("Invalid document UUID '{}': {}", doc_id, e);
@@ -30,7 +36,48 @@ pub async fn doc_clear_acl(
         }
     };
 
-    // Edit the document ... remove all ACLs. Just apply a global view permissions.
+    // Parse the library_id as an UUID
+    let lib_uuid = match Uuid::parse_str(&library_id_string) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            error!("Invalid library UUID '{}': {}", library_id_string, e);
+            let status = StatusCode::BAD_REQUEST;
+            return Err((status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: format!("Invalid library UUID '{}'", library_id_string),
+            })));
+        }
+    };
+
+    // Let's first move the document in the database, and if that succeeds, we edit the document in the Hub to clear the ACLs and force close it.
+    let db = match dbcolab::get_db() {
+        Some(db) => db,
+        None => {
+            error!("Database not initialized");
+            let status = StatusCode::INTERNAL_SERVER_ERROR;
+            return Err((status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: "Database not initialized".to_string(),
+            })));
+        }
+    };
+    match db.move_colab_doc_to_lib(&org_id, &lib_uuid, &doc_uuid, &by_prpl).await {
+        Ok(_) => info!("Document '{}' moved to library '{}'", doc_id, library_id_string),
+        Err(e) => {
+            error!("Failed to move document '{}' to library '{}': {}", doc_id, library_id_string, e);
+            let status = StatusCode::INTERNAL_SERVER_ERROR;
+            return Err((status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: format!("Failed to move document '{}' to library '{}': {}", doc_id, library_id_string, e),
+            })));
+        }
+    }
+
+
+    // Edit the document ... remove all ACLs and force close the room to kick all users out and prevent further edits.
     let result = doc_edit_service::edit_doc(registry, &org_id, &doc_id, |doc: &LoroDoc| {
         let props = doc.get_map("properties");
 
@@ -57,14 +104,18 @@ pub async fn doc_clear_acl(
         } else {
              return Err(format!("Document type property not found for document '{}'", doc_id));
         }
+
+        // Commit the changes to the document
+        doc.commit();
+        // Return success
         Ok(())
-    }).await;
-    
+    }, true).await;
+
     match result {
         Ok(_) => 
             Ok((
                 StatusCode::OK,
-                Json(DocumentClearAclResponse {
+                Json(DocumentMoveLibResponse {
                     success: true,
                 }),
             )),
@@ -99,6 +150,7 @@ fn reset_acls_statement_doc(doc: &LoroDoc) -> Result<(), String> {
                         if let Some(acls_container) = acls_val.as_container() {
                             if let Some(acls_map) = acls_container.as_map() {
                                 acls_map.clear().map_err(|e| format!("Failed to clear ACLs for language '{}': {}", lang_code, e))?;
+                                info!("Cleared ACLs for language '{}'", lang_code);
                             }
                         }
                     }
@@ -106,12 +158,17 @@ fn reset_acls_statement_doc(doc: &LoroDoc) -> Result<(), String> {
             }
         }
     }
+    info!("Cleared ACLs for statement document");
     Ok(())
 }
 
 fn reset_acls_sheet_doc(doc: &LoroDoc) -> Result<(), String> {
+    
+    info!("Resetting ACLs for sheet document");
+    
     let acls = doc.get_map("acls");
     acls.clear().map_err(|e| format!("Failed to clear ACLs: {}", e))?;
+    info!("Cleared top-level ACLs for sheet document");
 
     // Iterate over the blocks
     let content: loro::LoroMovableList = doc.get_movable_list("content");
@@ -132,14 +189,8 @@ fn reset_acls_sheet_doc(doc: &LoroDoc) -> Result<(), String> {
                         }
                     }
 
-                    let block_type_str = block.get("properties")
-                        .ok_or_else(|| "Block missing 'properties' field".to_string())?
-                        .as_container()
-                        .ok_or_else(|| "'properties' is not a container".to_string())?
-                        .as_map()
-                        .ok_or_else(|| "'properties' is not a map".to_string())?
-                        .get("type")
-                        .ok_or_else(|| "'properties' missing 'type' field".to_string())?
+                    let block_type_str = block.get("type")
+                        .ok_or_else(|| "Block missing 'type' field".to_string())?
                         .as_value()
                         .ok_or_else(|| "'type' is not a value".to_string())?
                         .as_string()
@@ -186,6 +237,9 @@ fn reset_acls_sheet_doc(doc: &LoroDoc) -> Result<(), String> {
                             }
                         }
                     }
+
+                    // Log cleared block ACLs
+                    info!("Cleared ACLs for block '{}'", i);
                 }
             }
         }
@@ -204,6 +258,21 @@ fn reset_acls_statement(map: &LoroMap) -> Result<(), String> {
         .ok_or_else(|| "Top acls on statement is not a container".to_string())?;
     let acls = acls_container.as_map()
         .ok_or_else(|| "Top acls on statement is not a map".to_string())?;
+
+    let properties_val = map.get("properties")
+        .ok_or_else(|| "Could not find properties map on the statement".to_string())?;
+    let properties_container = properties_val.as_container()
+        .ok_or_else(|| "Properties on statement is not a container".to_string())?;
+    let properties = properties_container.as_map()
+        .ok_or_else(|| "Properties on statement is not a map".to_string())?;
+
+    let content_type_val = properties.get("contentType")
+        .ok_or_else(|| "Could not find content type property on the statement".to_string())?;
+    let content_type = content_type_val.as_value()
+        .ok_or_else(|| "Content type property on statement is not a value".to_string())?;
+    let content_type_str = content_type.as_string()
+        .ok_or_else(|| "Content type property on statement is not a string".to_string())?;
+    let content_type = content_type_str.to_string();
 
     // Clear them
     acls.clear().map_err(|e| format!("Failed to clear ACLs: {}", e))?;
@@ -230,6 +299,7 @@ fn reset_acls_statement(map: &LoroMap) -> Result<(), String> {
                         if let Some(acls_container) = acls_val.as_container() {
                             if let Some(acls_map) = acls_container.as_map() {
                                 acls_map.clear().map_err(|e| format!("Failed to clear ACLs for language '{}': {}", lang_code, e))?;
+                                info!("Cleared ACLs for language '{}'", lang_code);
                             }
                         }
                     }
@@ -237,5 +307,6 @@ fn reset_acls_statement(map: &LoroMap) -> Result<(), String> {
             }
         }
     }
+    info!("Cleared ACLs for statement document with content type '{}'", content_type);
     Ok(())
 }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 use tracing::{error, info};
+use crate::db::util::escape_sql_string_literal;
 
 // Global database instance
 static DB: OnceCell<Arc<DbColab>> = OnceCell::const_new();
@@ -72,7 +73,7 @@ pub struct DocumentStreamRow {
     pub id: uuid::Uuid,
     pub name: String,
     pub document: uuid::Uuid,
-    pub version: i32,
+    pub version: u32,
     #[serde(deserialize_with = "deserialize_base64_content")]
     pub content: Option<Vec<u8>>,
     pub pointer: Option<String>,
@@ -162,16 +163,6 @@ impl DbColab {
         document_id: uuid::Uuid,
         principals: &[String],
     ) -> Result<Option<ViewableDocumentRow>, SqlxError> {
-        // Log pool stats before acquiring connection
-        let pool_idle = self.pool.num_idle() as u32;
-        let pool_size = self.pool.size();
-        info!(
-            "Checking view access for doc {} in org {}. Pool connections: {} idle, {} in use",
-            document_id,
-            org,
-            pool_idle,
-            pool_size.saturating_sub(pool_idle)
-        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
@@ -188,7 +179,7 @@ impl DbColab {
         };
 
         // Set the policy context
-        let safe_org = org.replace("'", "''");
+        let safe_org = escape_sql_string_literal(org);
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
         sqlx::query(&policy_sql).execute(&mut *tx).await?;
@@ -237,16 +228,6 @@ impl DbColab {
         org: &str,
         document_id: uuid::Uuid,
     ) -> Result<Option<ColabDocument>, SqlxError> {
-        // Log pool stats before acquiring connection
-        let pool_idle = self.pool.num_idle() as u32;
-        let pool_size = self.pool.size();
-        info!(
-            "Loading document {} for org {}. Pool connections: {} idle, {} in use",
-            document_id,
-            org,
-            pool_idle,
-            pool_size.saturating_sub(pool_idle)
-        );
 
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
@@ -260,7 +241,7 @@ impl DbColab {
 
         // Set the policy context
         // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
-        let safe_org = org.replace("'", "''");
+        let safe_org = escape_sql_string_literal(org);
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
         sqlx::query(&policy_sql).execute(&mut *tx).await?;
@@ -380,17 +361,6 @@ impl DbColab {
         // Calculate the size of the snapshot
         let snapshot_size = snapshot.len() as i64;
 
-        // Log pool stats before acquiring connection
-        let pool_idle = self.pool.num_idle() as u32;
-        let pool_size = self.pool.size();
-        info!(
-            "Creating document {} for org {}. Pool connections: {} idle, {} in use",
-            document_id,
-            org,
-            pool_idle,
-            pool_size.saturating_sub(pool_idle)
-        );
-
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
@@ -403,7 +373,7 @@ impl DbColab {
 
         // Set the policy context
         // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
-        let safe_org = org.replace("'", "''");
+        let safe_org = escape_sql_string_literal(org);
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
         sqlx::query(&policy_sql).execute(&mut *tx).await?;
@@ -460,18 +430,6 @@ impl DbColab {
         // Calculate the size of the snapshot
         let content_size = colab_package_blob.len() as i64;
 
-        // Log pool stats before acquiring connection
-        let pool_idle = self.pool.num_idle() as u32;
-        let pool_size = self.pool.size();
-        info!(
-            "Updating doc {} with stream {} for org {}. Pool connections: {} idle, {} in use",
-            doc_id,
-            doc_stream_id,
-            org,
-            pool_idle,
-            pool_size.saturating_sub(pool_idle)
-        );
-
         // Begin a transaction
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
@@ -487,7 +445,7 @@ impl DbColab {
 
         // Set the policy context
         // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
-        let safe_org = org.replace("'", "''");
+        let safe_org = escape_sql_string_literal(org);
         let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
 
         sqlx::query(&policy_sql).execute(&mut *tx).await?;
@@ -570,5 +528,68 @@ impl DbColab {
                 Err(SqlxError::RowNotFound)
             }
         }
+    }
+
+
+    /// Move a colab document to a specified library.
+    /// 
+    /// # Arguments
+    /// * `org` - ID of the organization
+    /// * `library_id` - The UUID of the library to move the document into
+    /// * `document_id` - The UUID of the document to move
+    /// * `by_prpl` - The principal performing the move operation (for auditing)
+    /// 
+    /// # Returns
+    /// * `Result<uuid::Uuid, SqlxError>` - The UUID of the moved document if successful
+    pub async fn move_colab_doc_to_lib(
+        &self,
+        org: &str,
+        library_id: &uuid::Uuid,
+        document_id: &uuid::Uuid,
+        by_prpl: &str
+    ) -> Result<uuid::Uuid, SqlxError> {
+
+        // Begin a transaction
+        let mut tx = match self.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to acquire connection from pool for document {}: {}. Pool state: {} idle, {} total", 
+                       document_id, e, self.pool.num_idle(), self.pool.size());
+                return Err(e);
+            }
+        };
+
+        // Set the policy context
+        // Note: SET LOCAL doesn't support bind parameters, so we must escape single quotes
+        let safe_org = escape_sql_string_literal(org);
+        let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
+
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
+
+        // Execute the main query
+        let query_sql = r#"
+            UPDATE documents SET
+                container = $3,
+                container_type = 'library',
+                owner = 's/colabri-app',
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = $4
+            WHERE org = $1 AND id = $2 AND deleted = FALSE
+            RETURNING *;
+        "#;
+        let row = sqlx::query(query_sql)
+            .bind(org)
+            .bind(document_id)
+            .bind(library_id)
+            .bind(by_prpl)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        // Commit the transaction
+        tx.commit().await?;
+
+        let returned_id: uuid::Uuid = row.unwrap().try_get("id")?;
+        info!("Document '{}' moved to library '{}'", library_id, returned_id);
+        Ok(returned_id)
     }
 }

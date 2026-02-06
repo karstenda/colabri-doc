@@ -6,7 +6,7 @@ use crate::models::{ColabModel, ColabPackage};
 use crate::db::dbcolab::{self, DocumentStreamRow};
 use crate::ws::docctx::DocContext;
 
-pub async fn fetch_doc_snapshot_from_db(org_id: &str, doc_id: &str) -> Result<Option<(Vec<u8>, DocContext)>, String> {
+pub async fn fetch_doc_snapshot_from_db(org_id: &str, doc_id: &str, version: Option<u32>) -> Result<Option<(Vec<u8>, DocContext)>, String> {
         info!("Loading document: {}", doc_id);
 
         // Parse the doc_id as an UUID
@@ -43,16 +43,36 @@ pub async fn fetch_doc_snapshot_from_db(org_id: &str, doc_id: &str) -> Result<Op
         // Iterate over the streams and search for the stream with name "main" and the highest version.
         let mut main_stream: Option<&DocumentStreamRow> = None;
         let mut main_stream_bytes: Option<&Vec<u8>> = None;
-        let mut highest_version = -1;
-        for stream in &doc_data.streams {
-            if stream.name == "main" && stream.version > highest_version {
-                if let Some(content) = &stream.content {
-                    main_stream_bytes = Some(content);
-                    main_stream = Some(stream);
-                    highest_version = stream.version;
+        
+        // If a version is specified, we look for that specific version of the main stream. If not, we look for the main stream with the highest version.
+        let stream_version = match version {
+            Some(v) => {
+                for stream in &doc_data.streams {
+                    if stream.name == "main" && stream.version == v {
+                        if let Some(content) = &stream.content {
+                            main_stream_bytes = Some(content);
+                            main_stream = Some(stream);
+                            break;
+                        }
+                    }
                 }
-            }
-        }
+                v
+            },
+            None => {
+                let mut highest_version: u32 = 0;
+                for stream in &doc_data.streams {
+                    if stream.name == "main" && stream.version > highest_version {
+                        if let Some(content) = &stream.content {
+                            main_stream_bytes = Some(content);
+                            main_stream = Some(stream);
+                            highest_version = stream.version;
+                        }
+                    }
+                }
+                highest_version
+            },
+        };
+
 
         // Check if we found content for the highest main stream
         if main_stream_bytes.is_none() || main_stream.is_none() {
@@ -119,6 +139,8 @@ pub async fn fetch_doc_snapshot_from_db(org_id: &str, doc_id: &str) -> Result<Op
                     org: org_id.to_string(),
                     doc_id: doc_uuid.clone(),
                     doc_stream_id: docstream_id.clone(),
+                    doc_version: stream_version,
+                    doc_owner: doc_data.owner.clone(),
                     peer_map: peer_map.clone(),
                     last_updating_peer: Some(loro_doc.peer_id()),
                 };
@@ -152,6 +174,8 @@ pub async fn fetch_doc_snapshot_from_db(org_id: &str, doc_id: &str) -> Result<Op
                 org: org_id.to_string(),
                 doc_id: doc_uuid.clone(),
                 doc_stream_id: main_stream.unwrap().id.clone(),
+                doc_version: stream_version,
+                doc_owner: doc_data.owner.clone(),
                 peer_map: peer_map,
                 last_updating_peer: None,
             };
