@@ -1,5 +1,6 @@
 use crate::{auth::auth, models::{DocumentVersionResponse, DocumentVersionRequest, ErrorResponse}, ws::docctx::DocContext};
 use axum::{extract::{State, Path, Extension}, http::StatusCode, Json};
+use base64::{engine::general_purpose, Engine as _};
 use loro_protocol::CrdtType;
 use loro_websocket_server::{HubRegistry, RoomKey};
 use std::{collections::HashMap, sync::Arc};
@@ -7,6 +8,7 @@ use tracing::{error, warn};
 use loro::{LoroDoc, ToJson, VersionVector};
 use uuid::Uuid;
 use crate::services::doc_db_service;
+
 
 /// Get the version of a document
 pub async fn doc_version(
@@ -143,7 +145,19 @@ pub async fn doc_version(
         }
     }
 
-    // Export the JSON
+    // Export to base64 binary
+    let binary_snapshot = loro_doc.export(loro::ExportMode::Snapshot).map_err(|e| {
+        error!("Failed to export document '{}' with version '{}' to binary: {}", doc_id, version, e);
+        let status = StatusCode::INTERNAL_SERVER_ERROR;
+        (status, Json(ErrorResponse {
+            code: status.as_u16(),
+            status: status.to_string(),
+            error: format!("Failed to export document '{}' with version '{}' to binary", doc_id, version),
+        }))
+    })?;
+    let binary_str = general_purpose::STANDARD.encode(&binary_snapshot);
+
+    // Export to JSON
     let loro_value = loro_doc.get_deep_value();
     let json = loro_value.to_json_value();
 
@@ -188,6 +202,8 @@ pub async fn doc_version(
         StatusCode::OK,
         Json(DocumentVersionResponse {
             json,
+            binary: binary_str,
+            version: version,
             version_v: version_v_json,
             peer_map,
         }),

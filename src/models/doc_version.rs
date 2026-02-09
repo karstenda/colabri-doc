@@ -18,6 +18,8 @@ pub struct DocumentVersionRequest {
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct DocumentVersionResponse {
     pub json: serde_json::value::Value,
+    pub binary: String,
+    pub version: u32,
     #[serde(rename = "versionV")]
     pub version_v: serde_json::value::Value,
     #[serde(rename = "peerMap")]
