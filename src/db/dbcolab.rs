@@ -592,4 +592,65 @@ impl DbColab {
         info!("Document '{}' moved to library '{}'", library_id, returned_id);
         Ok(returned_id)
     }
+
+    /// Mark a colab document as deleted without removing underlying data.
+    ///
+    /// # Arguments
+    /// * `org` - Organization identifier
+    /// * `document_id` - Document UUID to mark as deleted
+    /// * `by_prpl` - Principal performing the delete action
+    ///
+    /// # Returns
+    /// * `Result<uuid::Uuid, SqlxError>` - The UUID of the deleted document if successful
+    pub async fn delete_colab_doc(
+        &self,
+        org: &str,
+        document_id: &uuid::Uuid,
+        by_prpl: &str,
+    ) -> Result<uuid::Uuid, SqlxError> {
+        // Begin a transaction
+        let mut tx = match self.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to acquire connection from pool for document {}: {}. Pool state: {} idle, {} total",
+                       document_id, e, self.pool.num_idle(), self.pool.size());
+                return Err(e);
+            }
+        };
+
+        // Set the policy context
+        let safe_org = escape_sql_string_literal(org);
+        let policy_sql = format!("SET LOCAL app.orgs = '{}'", safe_org);
+        sqlx::query(&policy_sql).execute(&mut *tx).await?;
+
+        let query_sql = r#"
+            UPDATE documents SET
+                deleted = TRUE,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = $3
+            WHERE org = $1 AND id = $2 AND deleted = FALSE
+            RETURNING id;
+        "#;
+
+        let row = sqlx::query(query_sql)
+            .bind(org)
+            .bind(document_id)
+            .bind(by_prpl)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+
+        match row {
+            Some(returned) => {
+                let deleted_id: uuid::Uuid = returned.try_get("id")?;
+                info!("Document '{}' marked as deleted", deleted_id);
+                Ok(deleted_id)
+            }
+            None => {
+                error!("Document not found or already deleted: org={}, document={}", org, document_id);
+                Err(SqlxError::RowNotFound)
+            }
+        }
+    }
 }

@@ -9,6 +9,35 @@ use loro::{LoroDoc, ToJson, VersionVector};
 use uuid::Uuid;
 use crate::services::doc_db_service;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Json,
+    Binary,
+    Both,
+}
+
+impl OutputFormat {
+    fn from_query(format: Option<String>) -> Result<Self, String> {
+        match format.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            None => Ok(OutputFormat::Json),
+            Some(value) => match value.to_lowercase().as_str() {
+                "json" => Ok(OutputFormat::Json),
+                "binary" => Ok(OutputFormat::Binary),
+                "both" => Ok(OutputFormat::Both),
+                other => Err(format!("Invalid output format '{}'. Use 'json', 'binary', or 'both'.", other)),
+            },
+        }
+    }
+
+    fn include_json(self) -> bool {
+        matches!(self, OutputFormat::Json | OutputFormat::Both)
+    }
+
+    fn include_binary(self) -> bool {
+        matches!(self, OutputFormat::Binary | OutputFormat::Both)
+    }
+}
+
 
 /// Get the version of a document
 pub async fn doc_version(
@@ -17,6 +46,18 @@ pub async fn doc_version(
     Path((org_id, doc_id)): Path<(String, String)>,
     Json(request): Json<DocumentVersionRequest>,
 ) -> Result<(StatusCode, Json<DocumentVersionResponse>), (StatusCode, Json<ErrorResponse>)> {
+
+    let output_format = match OutputFormat::from_query(request.format.clone()) {
+        Ok(format) => format,
+        Err(message) => {
+            let status = StatusCode::BAD_REQUEST;
+            return Err((status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: message,
+            })));
+        }
+    };
 
     // Ensure the user is an org member or service
     let _ = auth::ensure_service(&prpls, "colabri-app")?;
@@ -113,53 +154,67 @@ pub async fn doc_version(
 
 
     // Now we have the target_loro_doc, if a version vector is specified ...
-    if let Some(ref vv) = version_v {
-        // go back to the specific point in time specified by version_v. 
-        let loro_version_v = VersionVector::from_iter(vv.clone());
-        let frontier_result = std::panic::catch_unwind(|| loro_doc.vv_to_frontiers(&loro_version_v));
-        let frontiers = match frontier_result {
-            Ok(frontiers) => frontiers,
-            Err(e) => {
-                error!("Failed to compute frontiers for version vector: {:?}", e);
-                let status = StatusCode::INTERNAL_SERVER_ERROR;
-                return Err((status, Json(ErrorResponse {
-                    code: status.as_u16(),
-                    status: status.to_string(),
-                    error: format!("Failed to compute frontiers for specified version vector"),
-                })));
-            }
-        };
-
-        // Checkout the loro_doc to the computed frontiers. This will allow us to get the state of the document at the specified version vector.
-        match loro_doc.checkout(&frontiers) {
-            Ok(()) => {},
-            Err(e) => {
-                error!("Failed to checkout document '{}' with version '{}' to version vector: {}", doc_id, version, e);
-                let status = StatusCode::INTERNAL_SERVER_ERROR;
-                return Err((status, Json(ErrorResponse {
-                    code: status.as_u16(),
-                    status: status.to_string(),
-                    error: format!("Failed to checkout document '{}' to specified version vector", doc_id),
-                })));
-            }
+    let frontiers = match &version_v {
+        Some(vv) => {
+            // go back to the specific point in time specified by version_v. 
+            let loro_version_v = VersionVector::from_iter(vv.clone());
+            let frontier_result = std::panic::catch_unwind(|| loro_doc.vv_to_frontiers(&loro_version_v));
+            let frontiers = match frontier_result {
+                Ok(frontiers) => frontiers,
+                Err(e) => {
+                    error!("Failed to compute frontiers for version vector: {:?}", e);
+                    let status = StatusCode::INTERNAL_SERVER_ERROR;
+                    return Err((status, Json(ErrorResponse {
+                        code: status.as_u16(),
+                        status: status.to_string(),
+                        error: format!("Failed to compute frontiers for specified version vector"),
+                    })));
+                }
+            };
+            frontiers
+        },
+        None => {
+            // If no version vector is specified, use the current state of the document
+            loro_doc.state_frontiers()
         }
-    }
+    };
 
-    // Export to base64 binary
-    let binary_snapshot = loro_doc.export(loro::ExportMode::Snapshot).map_err(|e| {
-        error!("Failed to export document '{}' with version '{}' to binary: {}", doc_id, version, e);
-        let status = StatusCode::INTERNAL_SERVER_ERROR;
-        (status, Json(ErrorResponse {
-            code: status.as_u16(),
-            status: status.to_string(),
-            error: format!("Failed to export document '{}' with version '{}' to binary", doc_id, version),
-        }))
-    })?;
-    let binary_str = general_purpose::STANDARD.encode(&binary_snapshot);
+    // Checkout the loro_doc to the computed frontiers. This will allow us to get the state of the document at the specified version vector.
+    match loro_doc.checkout(&frontiers) {
+        Ok(()) => {},
+        Err(e) => {
+            error!("Failed to checkout document '{}' with version '{}' to version vector: {}", doc_id, version, e);
+            let status = StatusCode::INTERNAL_SERVER_ERROR;
+            return Err((status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: format!("Failed to checkout document '{}' to specified version vector", doc_id),
+            })));
+        }
+    };
+    
 
-    // Export to JSON
-    let loro_value = loro_doc.get_deep_value();
-    let json = loro_value.to_json_value();
+    let binary_str = if output_format.include_binary() {
+        let binary_snapshot = loro_doc.export(loro::ExportMode::state_only(Some(&frontiers))).map_err(|e| {
+            error!("Failed to export document '{}' with version '{}' to binary: {}", doc_id, version, e);
+            let status = StatusCode::INTERNAL_SERVER_ERROR;
+            (status, Json(ErrorResponse {
+                code: status.as_u16(),
+                status: status.to_string(),
+                error: format!("Failed to export document '{}' with version '{}' to binary", doc_id, version),
+            }))
+        })?;
+        Some(general_purpose::STANDARD.encode(&binary_snapshot))
+    } else {
+        None
+    };
+
+    let json = if output_format.include_json() {
+        let loro_value = loro_doc.get_deep_value();
+        Some(loro_value.to_json_value())
+    } else {
+        None
+    };
 
     // Serialize the peer map
     let peer_map = serde_json::to_value(target_peer_map.unwrap_or_default()).map_err(|e| {

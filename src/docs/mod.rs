@@ -42,14 +42,15 @@ pub async fn diagnostics_doc() {}
 /// This endpoint will always return the latest state of a document.
 #[utoipa::path(
     get,
-    path = "/api/v1/{org_id}/documents/{doc_id}/latest",
+    path = "/api/v1/{org_id}/documents/{doc_id}",
     tag = "documents",
     responses(
         (status = 200, description = "Latest document state retrieved successfully", body = DocumentLatestResponse)
     ),
     params(
         ("org_id" = String, Path, description = "Organization ID"),
-        ("doc_id" = String, Path, description = "Document ID")
+        ("doc_id" = String, Path, description = "Document ID"),
+        ("format" = Option<String>, Query, description = "Output format: json, binary, or both (default: json)")
     )
 )]
 #[allow(dead_code)]
@@ -74,6 +75,25 @@ pub async fn doc_latest_doc() {}
 #[allow(dead_code)]
 pub async fn doc_version_doc() {}
 
+
+/// Delete a document
+/// 
+/// This endpoint will delete a document. It is used when a user wants to remove a document from their personal space or a shared library.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/{org_id}/documents/{doc_id}",
+    tag = "documents",
+    responses(
+        (status = 200, description = "Document deleted successfully", body = DocumentDeleteResponse)
+    ),
+    params(
+        ("org_id" = String, Path, description = "Organization ID"),
+        ("doc_id" = String, Path, description = "Document ID")
+    )
+)]
+#[allow(dead_code)]
+pub async fn doc_delete_doc() {}
+
 /// Move a document to a library
 /// 
 /// This endpoint moves a document to a library. It is used when a user wants to move a document from their personal space to a shared library.
@@ -81,6 +101,7 @@ pub async fn doc_version_doc() {}
     post,
     path = "/api/v1/{org_id}/documents/{doc_id}/move-lib",
     tag = "documents",
+    request_body(content = DocumentMoveLibRequest, description = "Move to library request parameters"),
     responses(
         (status = 200, description = "Document moved successfully", body = DocumentMoveLibResponse)
     ),
@@ -100,6 +121,7 @@ pub async fn doc_move_lib_doc() {}
         diagnostics_doc,
         doc_latest_doc,
         doc_version_doc,
+        doc_delete_doc,
         doc_move_lib_doc,
     ),
     components(
@@ -108,7 +130,10 @@ pub async fn doc_move_lib_doc() {}
             DiagnosticsResponse, 
             DocumentLatestResponse, 
             DocumentVersionRequest, 
-            DocumentVersionResponse, 
+            DocumentVersionResponse,
+            DocumentDeleteResponse,
+            DocumentMoveLibRequest,
+            DocumentMoveLibResponse,
             ErrorResponse)
     ),
     tags(
