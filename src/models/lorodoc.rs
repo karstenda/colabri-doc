@@ -354,6 +354,9 @@ fn txtelem_child_to_loro_map(
 fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
     let loro_map = LoroMap::new();
     match block {
+        ColabSheetBlock::Properties(_properties_block) => {
+          let _ = loro_map.insert("type", "properties");  
+        }
         ColabSheetBlock::Text(text_block) => {
             let _ = loro_map.insert("type", "text");
             // ACLs
@@ -423,6 +426,30 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
                 }
 
                 let _ = rows_list.insert_container(idx, row_map);
+            }
+        }
+        ColabSheetBlock::Attributes(attribute_block) => {
+            let _ = loro_map.insert("type", "attributes");
+            // ACLs
+            let acls_map = loro_map
+                .insert_container("acls", LoroMap::new())
+                .unwrap();
+            populate_acls(&acls_map, &attribute_block.acls);
+
+            // Title
+            let title_element_map = loro_map
+                .insert_container("title", LoroMap::new())
+                .unwrap();
+            txtelem_to_loro_doc(&attribute_block.title, &title_element_map);
+
+            // Attributes
+            let attributes_map = loro_map
+                .insert_container("attributes", LoroMap::new())
+                .unwrap();
+            for (key, value) in &attribute_block.attributes {
+                // Serialize the attribute value to a string.
+                let value_json = serde_json::to_string(value).unwrap_or_else(|_| "".to_string());
+                let _ = attributes_map.insert(key, value_json.as_str());
             }
         }
     }

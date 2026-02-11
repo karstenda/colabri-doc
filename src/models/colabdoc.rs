@@ -96,6 +96,15 @@ pub enum ColabSheetBlock {
     Text(ColabSheetTextBlock),
     #[serde(rename = "statement-grid")]
     StatementGrid(ColabSheetStatementGridBlock),
+    #[serde(rename = "properties")]
+    Properties(ColabSheetPropertiesBlock),
+    #[serde(rename = "attributes")]
+    Attributes(ColabSheetAttributesBlock),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetPropertiesBlock {
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +116,21 @@ pub struct ColabSheetTextBlock {
     pub text_element: TextElement,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub approvals: HashMap<String, ColabApproval>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetAttributesBlock {
+    pub title: TextElement,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub attributes: HashMap<String, AttributeValue>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttributeValue {
+    pub display: String,
+    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
