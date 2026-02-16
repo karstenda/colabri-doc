@@ -63,6 +63,9 @@ pub struct Config {
 
     /// Database URL
     pub db_url: Option<String>,
+
+    /// Document save interval in milliseconds
+    pub doc_save_interval_ms: Option<u64>,
 }
 
 impl Config {
@@ -126,6 +129,7 @@ impl Default for Config {
             cloud_auth_jwt_secret: None,
             gcp_project_id: None,
             db_url: None,
+            doc_save_interval_ms: Some(30_000), // Default to 30 seconds
         }
     }
 }

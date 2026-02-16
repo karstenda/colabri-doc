@@ -95,7 +95,7 @@ async fn main() {
     let ws_config = ServerConfig {
         on_load_document: Some(std::sync::Arc::new(ws::wscolab::on_load_document)),
         on_save_document: Some(std::sync::Arc::new(ws::wscolab::on_save_document)),
-        save_interval_ms: Some(30_000), // Save every 30 seconds
+        save_interval_ms: config.doc_save_interval_ms,
         default_permission: loro_websocket_server::protocol::Permission::Write,
         authenticate: Some(std::sync::Arc::new(ws::wscolab::on_authenticate)),
         handshake_auth: Some(std::sync::Arc::new(ws::wscolab::on_auth_handshake)),
@@ -111,6 +111,7 @@ async fn main() {
         .unwrap_or_else(|_| panic!("Failed to bind WebSocket server to {}", ws_addr));
 
     info!("📡 WebSocket server starting on ws://{}", ws_addr);
+    info!("⏱️ Document save interval set to {} ms", config.doc_save_interval_ms.unwrap_or(30_000));
 
     // Create API routes
     let api_routes = create_api_routes(registry.clone());
