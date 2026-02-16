@@ -377,6 +377,75 @@ fn colab_sheet_block_to_loro_map(block: &ColabSheetBlock) -> LoroMap {
                 .unwrap();
             txtelem_to_loro_doc(&text_block.text_element, &text_element_map);
         }
+        ColabSheetBlock::Symbol(symbol_block) => {
+            let _ = loro_map.insert("type", "symbol-grid");
+            // ACLs
+            let acls_map = loro_map
+                .insert_container("acls", LoroMap::new())
+                .unwrap();
+            populate_acls(&acls_map, &symbol_block.acls);
+
+            // Title
+            let title_element_map = loro_map
+                .insert_container("title", LoroMap::new())
+                .unwrap();
+            txtelem_to_loro_doc(&symbol_block.title, &title_element_map);
+
+            // Rows
+            let rows_list = loro_map
+                .insert_container("rows", LoroMovableList::new())
+                .unwrap();
+
+            for (idx, row) in symbol_block.rows.iter().enumerate() {
+                let row_map = LoroMap::new();
+                
+                // Create a symbol map for this row
+                let symbol_map = row_map
+                    .insert_container("symbol", LoroMap::new())
+                    .unwrap();
+                let symbol_model = &row.symbol;
+                let _ = symbol_map.insert("type", symbol_model.r#type.as_str());
+                let _ = rows_list.insert_container(idx, row_map);
+            }
+
+        }
+        ColabSheetBlock::Barcode(barcode_block) => {
+            let _ = loro_map.insert("type", "barcode-grid");
+            // ACLs
+            let acls_map = loro_map
+                .insert_container("acls", LoroMap::new())
+                .unwrap();
+            populate_acls(&acls_map, &barcode_block.acls);
+
+            // Title
+            let title_element_map = loro_map
+                .insert_container("title", LoroMap::new())
+                .unwrap();
+            txtelem_to_loro_doc(&barcode_block.title, &title_element_map);
+
+            // Rows
+            let rows_list = loro_map
+                .insert_container("rows", LoroMovableList::new())
+                .unwrap();
+
+            for (idx, row) in barcode_block.rows.iter().enumerate() {
+                let row_map = LoroMap::new();
+                
+                // Create a barcode map for this row
+                let barcode_map = row_map
+                    .insert_container("barcode", LoroMap::new())
+                    .unwrap();
+                let barcode_model = &row.barcode;
+                let _ = barcode_map.insert("type", barcode_model.r#type.as_str());
+                let _ = barcode_map.insert("data", barcode_model.data.as_str());
+                if barcode_model.symbol_component_code.is_some() {
+                    let _ = barcode_map.insert("symbolComponentCode", barcode_model.symbol_component_code.as_ref().unwrap().as_str());
+                }
+
+                let _ = rows_list.insert_container(idx, row_map);
+            }
+
+        }
         ColabSheetBlock::StatementGrid(grid_block) => {
             let _ = loro_map.insert("type", "statement-grid");
             // ACLs

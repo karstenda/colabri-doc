@@ -92,14 +92,18 @@ pub struct ColabSheetModel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ColabSheetBlock {
-    #[serde(rename = "text")]
-    Text(ColabSheetTextBlock),
-    #[serde(rename = "statement-grid")]
-    StatementGrid(ColabSheetStatementGridBlock),
     #[serde(rename = "properties")]
     Properties(ColabSheetPropertiesBlock),
     #[serde(rename = "attributes")]
     Attributes(ColabSheetAttributesBlock),
+    #[serde(rename = "text")]
+    Text(ColabSheetTextBlock),
+    #[serde(rename = "statement-grid")]
+    StatementGrid(ColabSheetStatementGridBlock),
+    #[serde(rename = "barcode-grid")]
+    Barcode(ColabSheetBarcodeBlock),
+    #[serde(rename = "symbol-grid")]
+    Symbol(ColabSheetSymbolBlock),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,10 +138,54 @@ pub struct AttributeValue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColabSheetStatementGridBlock {
+pub struct ColabSheetBarcodeBlock {
+    pub title: TextElement,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    pub rows: Vec<ColabSheetBarcodeGridRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetBarcodeGridRow {
+    #[serde(rename = "barcode")]
+    pub barcode: ColabBarcodeModel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabBarcodeModel {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub data: String,
+    #[serde(rename = "symbolComponentCode")]
+    pub symbol_component_code: Option<String>,
+    
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetSymbolBlock {
     pub title: TextElement,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
+    pub rows: Vec<ColabSheetSymbolGridRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetSymbolGridRow {
+    #[serde(rename = "symbol")]
+    pub symbol: ColabSymbolModel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSymbolModel {
+    #[serde(rename = "type")]
+    pub r#type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColabSheetStatementGridBlock {
+    pub title: TextElement,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub acls: HashMap<ColabModelPermission, Vec<String>>,
     pub rows: Vec<ColabSheetStatementGridRow>,
 }
 
